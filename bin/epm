@@ -1,0 +1,1480 @@
+#!/usr/bin/env bash
+
+VERSION_NUMBER="0.0.1"
+VERSION_DATE="04/07/2015"
+PROGRAM_FILE="$(basename $0)"
+PROGRAM_NAME="${PROGRAM_FILE%.*}"
+PROGRAM_PATH="$(command -v $0)"
+EPM_DIR=".$PROGRAM_NAME"
+TERM_COLS=$(tput cols)
+TERM_NORMAL=$(tput sgr0)
+TERM_BOLD=$(tput bold)
+TERM_RED=$(tput setaf 1)
+TERM_GREEN=$(tput setaf 2)
+TERM_YELLOW=$(tput setaf 3)
+TERM_BLUE=$(tput setaf 4)
+TERM_PURPLE=$(tput setaf 5)
+TERM_CYAN=$(tput setaf 6)
+TERM_GRAY=$(tput setaf 7)
+
+ENV_ALL="all"
+ENV_NIX="nix"
+ENV_WIN="win"
+ENV=$ENV_NIX
+PKG_EXT="pkg"
+SHA1_EXT="sha1"
+TRACE_LEVEL_VALUE="1"
+TRACE_LEVEL_NAME="trace"
+DEBUG_LEVEL_VALUE="2"
+DEBUG_LEVEL_NAME="debug"
+INFO_LEVEL_VALUE="3"
+INFO_LEVEL_NAME="info"
+WARN_LEVEL_VALUE="4"
+WARN_LEVEL_NAME="warn"
+ERROR_LEVEL_VALUE="5"
+ERROR_LEVEL_NAME="error"
+FATAL_LEVEL_VALUE="6"
+FATAL_LEVEL_NAME="fatal"
+declare -A LOG_LEVELS=( [$TRACE_LEVEL_NAME]="$TRACE_LEVEL_VALUE" [$DEBUG_LEVEL_NAME]="$DEBUG_LEVEL_VALUE" [$INFO_LEVEL_NAME]="$INFO_LEVEL_VALUE" [$WARN_LEVEL_NAME]="$WARN_LEVEL_VALUE" [$ERROR_LEVEL_NAME]="$ERROR_LEVEL_VALUE" [$FATAL_LEVEL_NAME]="$FATAL_LEVEL_VALUE"  )
+EPM_DEFAULT_LOG_NAME=$TRACE_LEVEL_NAME
+EPM_DEFAULT_LOG_VALUE=${LOG_LEVELS[$EPM_DEFAULT_LOG_NAME]}
+EPM_CFG_FILE_NAME="config"
+EPM_DAT_FILE_NAME="data"
+EPM_LOG_FILE_NAME="$PROGRAM_NAME.log"
+PKG_PACK_FILE_NAME="pack.sh"
+PKG_CONFIG_FILE_NAME="config.sh"
+PKG_INSTALL_FILE_NAME="install.sh"
+PKG_UNINSTALL_FILE_NAME="uninstall.sh"
+
+ROOT_PATH="$(pwd)"
+BIN_PATH="$ROOT_PATH/bin"
+LIB_PATH="$ROOT_PATH/lib"
+ETC_PATH="$ROOT_PATH/etc"
+VAR_PATH="$ROOT_PATH/var"
+LOG_PATH="$VAR_PATH/log"
+TMP_PATH="$ROOT_PATH/tmp"
+DB_PATH="$ROOT_PATH/db"
+APP_PATH="$ROOT_PATH/app"
+WS_PATH="$ROOT_PATH/ws"
+WWW_PATH="$ROOT_PATH/www"
+EPM_PATH="$ROOT_PATH/$EPM_DIR"
+EPM_CFG_FILE_PATH="$EPM_PATH/$EPM_CFG_FILE_NAME"
+EPM_DAT_FILE_PATH="$EPM_PATH/$EPM_DAT_FILE_NAME"
+EPM_LOG_PATH="$EPM_PATH/log"
+EPM_LOG_FILE_PATH="$EPM_LOG_PATH/$EPM_LOG_FILE_NAME"
+EPM_BIN_PATH="$EPM_PATH/bin"
+EPM_PKG_PATH="$EPM_PATH/pkg"
+EPM_STG_PATH="$EPM_PATH/stg"
+
+PROGRAM_PATH_KEY="PROGRAM_PATH"
+ROOT_PATH_KEY="ROOT_PATH"
+BIN_PATH_KEY="BIN_PATH"
+LIB_PATH_KEY="LIB_PATH"
+ETC_PATH_KEY="ETC_PATH"
+VAR_PATH_KEY="VAR_PATH"
+LOG_PATH_KEY="LOG_PATH"
+TMP_PATH_KEY="TMP_PATH"
+DB_PATH_KEY="DB_PATH"
+APP_PATH_KEY="APP_PATH"
+WS_PATH_KEY="WS_PATH"
+WWW_PATH_KEY="WWW_PATH"
+EPM_BIN_PATH_KEY="EPM_BIN_PATH"
+EPM_PKG_PATH_KEY="EPM_PKG_PATH"
+EPM_PKG_SRV_KEY="EPM_PKG_SRV"
+
+sys_init() {
+    test ! -d "$EPM_PATH" && mkdir "$EPM_PATH"
+    test ! -d "$EPM_LOG_PATH" && mkdir "$EPM_LOG_PATH"
+    test ! -f "$EPM_LOG_FILE_PATH" && touch "$EPM_LOG_FILE_PATH"
+}
+
+log() {
+    local LEVEL_NAME="$1"
+    local MSG="$2"
+    local LOG_VALUE=${LOG_LEVELS[$LEVEL_NAME]}
+
+    if [ $LOG_VALUE -ge $EPM_DEFAULT_LOG_VALUE ]; then
+        echo "$(date +'%d-%m-%Y %H:%M:%S') $MSG" >> "$EPM_LOG_FILE_PATH"
+    fi
+}
+
+log_trace() {
+    log "$TRACE_LEVEL_NAME" "[TRACE] - $1"
+}
+
+log_debug() {
+    log "$DEBUG_LEVEL_NAME" "[DEBUG] - $1"
+}
+
+log_info() {
+    log "$INFO_LEVEL_NAME" "[INFO] - $1"
+}
+
+log_warn() {
+    log "$WARN_LEVEL_NAME" "[WARN] - $1"
+}
+
+log_error() {
+    log "$ERROR_LEVEL_NAME" "[ERROR] - $1"
+}
+
+log_fatal() {
+    log "$FATAL_LEVEL_NAME" "[FATAL] - $1"
+}
+
+empty() {
+    log_trace "Checking if parameter \"$1\" is empty"
+    test -z "$1"
+}
+
+file_exists() {
+    log_trace "Checking if file \"$1\" exists"
+    test -f "$1"
+}
+
+file_create() {
+    log_trace "Creating file \"$1\""
+    touch "$1"
+}
+
+file_delete() {
+    log_trace "Deleting file \"$1\""
+    rm -f "$1"
+}
+
+file_move() {
+    log_trace "Moving file \"$1\" to \"$2\""
+    mv "$1" "$2"
+}
+
+file_executable() {
+    log_trace "Making file \"$1\" executable"
+    chmod +x "$1"
+}
+
+file_truncate() {
+    log_trace "Truncating file \"$1\""
+    truncate -s 0 "$1"
+}
+
+file_equal() {
+    if grep -v -F -x -f $1 $2; then
+         return 1
+    else
+        return 0
+    fi          
+}
+
+dir_exists() {
+    log_trace "Checking if directory \"$1\" exists"
+    test -d "$1"
+}
+
+dir_create() {
+    log_trace "Creating directory \"$1\""
+    mkdir -p "$1"
+}
+
+dir_delete() {
+    log_trace "Deleting directory \"$1\""
+    rm -Rf "$1"
+}
+
+dir_checksum() {
+    log_trace "Calculating checksum of directory \"$1\""
+    find "$1" -type f -print0 | sort -z | xargs -0 sha1sum | cut -d" " -f1 | sha1sum | cut -d" " -f1
+}
+
+url_valid() {
+    log_trace "Checking if \"$1\" is a valid url"
+    URL_REGEX="(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]"
+    [[ $1 =~ $URL_REGEX ]]
+}
+
+url_file_exists() {
+    log_trace "Checking if file \"$1\" exists"
+    curl --output /dev/null --silent --head --fail "$1"
+}
+
+url_file_download() {
+    log_trace "Downloading file \"$1\""
+    curl --silent --fail -o "$1" "$2"
+}
+
+url_file_upload() {
+    log_trace "Uploading file \"$1\""
+    curl --fail --silent -T "$1" "$2"
+}
+
+archive_create() {
+    log_trace "Creating archive \"$1\" from \"$2\""
+    tar czf "$1" -C "$2" .
+}
+
+archive_extract() {
+    log_trace "Extracting archive \"$1\" to \"$2\""
+    tar xzf "$1" -C "$2"
+}
+
+yesNo() {
+    log_trace "Querying the user"
+    while true; do
+        read -p "$1" YN
+        YN=${YN,,}
+        case $YN in
+            y|yes) 
+                log_trace "Response was yes ($YN)"
+                break
+                ;;
+            n|no) 
+                log_trace "Response was no ($YN)"
+                exit 0
+                ;;
+        esac
+    done
+}
+
+command_start() {
+    printf "%s: " "$1"
+}
+
+command_ok() {
+    if empty $1; then
+        printf "[$TERM_GREEN""OK""$TERM_NORMAL]\n"
+    else
+        printf "[$TERM_GREEN""OK""$TERM_NORMAL][%s]\n" "$1"
+    fi
+}
+
+command_fail() {
+    printf "[$TERM_RED""FAIL""$TERM_NORMAL][%s]\n" "$1"
+    exit 1
+}
+
+error() {
+    log_debug "Exiting $PROGRAM_FILE on error with message \"$1\""
+    printf "%s\n" "$1"
+    exit 1
+}
+
+usage() { 
+    log_trace "Printing usage"
+
+    printf "usage:$PROGRAM_FILE [--version] [--help] <command> <args>\n"
+    printf "${PROGRAM_FILE^} commands:"
+    printf "\tinit\tInitializes the environment\n"
+    printf "\tconfig\tGet and set $PROGRAM_NAME options\n"
+    printf "\tpull\tFetches a package\n"
+    printf "\tpush\tSends a new version of the package to the package server\n"
+    printf "\tlist\tLists all the packages installed locally\n"
+}
+
+command_usage() {
+    USAGE_CMD=$1
+    USAGE_CMD_SYNOPSIS=$2
+    USAGE_CMD_DESCRIPTION=$3
+    USAGE_MSG=$4
+    
+    log_trace "Printing command usage with message \"$USAGE_MSG\""
+
+    ! empty "$USAGE_MSG" && printf "%s\n\n" "$USAGE_MSG" 
+    printf "usage: %s %s %s\n" "$PROGRAM_NAME" "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS"
+    ! empty "$USAGE_CMD_DESCRIPTION" && printf "\n%s\n" "$USAGE_CMD_DESCRIPTION" 
+    exit 1
+}
+
+check() {
+    log_trace "Checking base conditions"
+    if ! dir_exists $EPM_PATH; then
+        printf "fatal: Not a %s folder:%s" "$PROGRAM_NAME" "$EPM_DIR"
+        exit 1
+    fi
+}
+
+config_exists() {
+    log_trace "Checking if \"$1\" key exists in \"$EPM_CFG_FILE_PATH\""
+    grep -q "export $1=" $EPM_CFG_FILE_PATH
+}
+
+config_add_exec() {
+    log_trace "Adding key \"$1\" with value \"$2\" to \"$EPM_CFG_FILE_PATH\""
+    echo "export $1=$2" >> $EPM_CFG_FILE_PATH
+}
+
+config_remove_exec() {
+    log_trace "Removing key \"$1\" from \"$EPM_CFG_FILE_PATH\""
+    sed -i "/export $1=/d" $EPM_CFG_FILE_PATH
+}
+
+config_get_exec() {
+    log_trace "Getting key \"$1\" value from \"$EPM_CFG_FILE_PATH\""
+    grep -Po "(?<=^export $1=).*" $EPM_CFG_FILE_PATH
+}
+
+config_set_exec() {
+    log_trace "Setting key \"$1\" with value \"$2\" in \"$EPM_CFG_FILE_PATH\""
+    sed -i "s|export $1=.*|export $1=$2|g" $EPM_CFG_FILE_PATH
+}
+
+data_add_exec() {
+    log_trace "Adding package \"$1\" with env \"$2\" and type \"$3\" value to \"$EPM_DAT_FILE_PATH\""
+    echo "$1 $2 $3" >> $EPM_DAT_FILE_PATH
+}
+
+data_remove_exec() {
+    log_trace "Removing package \"$1\" from \"$EPM_DAT_FILE_PATH\""
+    sed -i "/$1 /d" $EPM_DAT_FILE_PATH
+}
+
+data_get_exec() {
+    log_trace "Getting package \"$1\" info from \"$EPM_DAT_FILE_PATH\""
+    sed -n "/^$1.*$/p" $EPM_DAT_FILE_PATH
+}
+
+get_parent_package() {
+    sed 's/\([a-zA-Z0-9]\+\)_[a-zA-Z0-9]\+/\1/' <<< "$1"
+}
+
+get_package() {
+    if [ "$#" -eq 0 ]; then
+        while read DATA; do
+            cut -d' ' -f1 <<< "$DATA"
+        done
+    else
+        cut -d' ' -f1 <<< "$1"
+    fi
+}
+
+get_package_type() {
+    if [ "$#" -eq 0 ]; then
+        while read DATA; do
+            cut -d' ' -f3 <<< "$DATA"
+        done
+    else
+        cut -d' ' -f3 <<< "$1"
+    fi
+}
+
+get_env() {
+    if [ "$#" -eq 0 ]; then
+        while read DATA; do
+            cut -d' ' -f2 <<< "$DATA"
+        done
+    else
+        cut -d' ' -f2 <<< "$1"
+    fi
+}
+
+is_parent_package() {
+    log_trace "Checking if \"$1\" is a parent package"
+    [[ "$1" =~ ^[a-zA-Z]{1}[a-zA-Z0-9]+$ ]]
+}
+
+is_child_package() {
+    log_trace "Checking if \"$1\" is a child package"
+    [[ "$1" =~ ^[a-zA-Z]{1}[a-zA-Z0-9]*_[a-zA-Z0-9]+$ ]]
+}
+
+is_package() {
+    log_trace "Checking if \"$1\" is a package"
+    is_parent_package "$1" || is_child_package "$1"   
+}
+
+data_get_package() {
+    log_trace "Getting package \"$1\" name"
+    get_package "$(data_get_exec "$1 ")"
+}
+
+data_has_package() {
+    log_trace "Checking if package \"$1\" is installed"
+    PKG=$(data_get_package "$1")
+    [ ! -z $(get_package "$PKG") ]
+}
+
+data_get_env() {
+    log_trace "Getting all package environments"
+    get_env "$(data_get_exec "$1")"
+}
+
+data_get_package_type() {
+    log_trace "Getting all package types"
+    get_package_type "$(data_get_exec "$1")"
+}
+
+data_list() {
+    log_trace "Getting all packages info"
+    data_get_exec ""
+}
+
+data_list_packages() {
+    log_trace "Getting all package names"
+    data_get_exec "" | get_package
+}
+
+data_list_child_packages() {
+    log_trace "Getting child packages"
+    data_get_exec $1"_" | get_package
+}
+
+data_set_exec() {
+    log_trace "Setting package \"$1\" with env \"$2\" and type \"$3\" in to \"$EPM_DAT_FILE_PATH\""
+    sed -i "s|$1.*|$1 $2 $3|g" $EPM_DAT_FILE_PATH
+}
+
+config_usage() {
+    log_trace "Printing config usage"
+    printf "${PROGRAM_FILE} config commands:\n"
+    printf "\tadd\tAdds a key/value\n"
+    printf "\tremove\tRemoves a key\n"
+    printf "\tget\tGets the value of a key\n"
+    printf "\tset\tSets the value of a key\n"
+}
+
+config_add_check() {
+    USAGE_CMD="config add"
+    USAGE_CMD_SYNOPSIS="<key> <value>"
+    USAGE_CMD_DESCRIPTION=""
+   
+    log_debug "Checking config-add command preconditions"
+
+    if empty $1 || empty $2; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key and a value"
+    fi
+}
+
+config_add() {
+    CONFIG_ADD_NAME=$1
+    CONFIG_ADD_VALUE=$2    
+
+    log_debug "Executing config-add command"
+
+    config_add_check "$CONFIG_ADD_NAME" "$CONFIG_ADD_VALUE"
+
+    if config_exists "$CONFIG_ADD_NAME"; then
+        config_set_exec $CONFIG_ADD_NAME $CONFIG_ADD_VALUE
+    else
+        config_add_exec "$CONFIG_ADD_NAME" "$CONFIG_ADD_VALUE"
+    fi
+}
+
+config_remove_check() {
+    USAGE_CMD="config remove"
+    USAGE_CMD_SYNOPSIS="<key>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    log_debug "Checking config-remove command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+    fi
+}
+
+config_remove() {
+    CONFIG_REMOVE_NAME=$1
+
+    log_debug "Executing config-remove command"
+
+    config_remove_check $CONFIG_REMOVE_NAME
+
+    if config_exists "$CONFIG_REMOVE_NAME"; then
+        config_remove_exec "$CONFIG_REMOVE_NAME"
+    fi
+}
+
+config_get_check() {
+    USAGE_CMD="config get"
+    USAGE_CMD_SYNOPSIS="<key>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    log_debug "Checking config-get command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+    fi
+
+    if ! config_exists $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Key $1 does not exists"
+    fi
+}
+
+config_get() {
+    CONFIG_GET_NAME=$1
+
+    log_debug "Executing config-get command"
+
+    config_get_check $CONFIG_GET_NAME
+
+    config_get_exec $CONFIG_GET_NAME
+}
+
+config_set_check() {
+    USAGE_CMD="config set"
+    USAGE_CMD_SYNOPSIS="<key> <value>"
+    USAGE_CMD_DESCRIPTION=""
+
+    log_debug "Checking config-set command preconditions"
+   
+    if empty $1 || empty $2; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key and a value"
+    fi
+}
+
+config_set() {
+    CONFIG_SET_NAME=$1
+    CONFIG_SET_VALUE=$2
+
+    log_debug "Executing config-set command"
+
+    config_set_check $CONFIG_SET_NAME $CONFIG_SET_VALUE
+
+    if config_exists "$CONFIG_SET_NAME"; then
+        config_set_exec $CONFIG_SET_NAME $CONFIG_SET_VALUE
+    else
+        config_add_exec "$CONFIG_SET_NAME" "$CONFIG_SET_VALUE"
+    fi
+}
+
+config_default_check() {
+    USAGE_CMD="config"
+    USAGE_CMD_SYNOPSIS="<key> [value]"
+    USAGE_CMD_DESCRIPTION=""
+
+    log_debug "Checking config-default command preconditions"
+    
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+    fi
+}
+
+config_default() {
+    CONFIG_DEFAULT_NAME=$1
+    CONFIG_DEFAULT_VALUE=$2    
+    
+    log_debug "Executing the config default command"
+
+    config_default_check $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+
+    if empty $CONFIG_DEFAULT_VALUE; then
+        config_get_exec $CONFIG_DEFAULT_NAME
+    elif config_exists $CONFIG_DEFAULT_NAME; then
+        config_set_exec $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+    else        
+        config_add_exec $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+    fi
+}
+
+config() {
+    CONFIG_CMD=$1    
+
+    log_debug "Executing the config command with \"$CONFIG_CMD\""
+
+    check
+    
+    case $CONFIG_CMD in
+        --add)
+            config_add $2 $3
+            ;;
+        --remove)
+            config_remove $2
+            ;;
+        --get)
+            config_get $2
+            ;;
+        --set)
+            config_set $2 $3
+            ;;
+        "")
+            config_usage
+            ;;                
+        *)
+            config_default $1 $2
+            ;;
+    esac
+}
+
+init_check() {
+    USAGE_CMD="init"
+    USAGE_CMD_SYNOPSIS="<repo>"
+    USAGE_CMD_DESCRIPTION=""
+
+    log_debug "Checking init command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a repository to use"
+    fi
+
+    if ! url_valid $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a valid url"
+    fi
+
+    if file_exists $EPM_CFG_FILE_PATH; then
+        yesNo "${PROGRAM_NAME} already initialized, overwrite? "
+    fi
+}
+
+init_exec() {
+    INIT_URL=$1
+
+    if file_exists $EPM_CFG_FILE_PATH; then
+        file_truncate $EPM_CFG_FILE_PATH
+    else
+        file_create $EPM_CFG_FILE_PATH
+    fi
+
+    if file_exists $EPM_DAT_FILE_PATH; then
+        file_truncate $EPM_DAT_FILE_PATH
+    else
+        file_create $EPM_DAT_FILE_PATH
+    fi
+
+    ! dir_exists $BIN_PATH && dir_create $BIN_PATH
+    ! dir_exists $LIB_PATH && dir_create $LIB_PATH
+    ! dir_exists $ETC_PATH && dir_create $ETC_PATH
+    ! dir_exists $VAR_PATH && dir_create $VAR_PATH
+    ! dir_exists $LOG_PATH && dir_create $LOG_PATH
+    ! dir_exists $EPM_LOG_PATH && dir_create $EPM_LOG_PATH
+    ! dir_exists $TMP_PATH && dir_create $TMP_PATH
+    ! dir_exists $DB_PATH && dir_create $DB_PATH
+    ! dir_exists $APP_PATH && dir_create $APP_PATH
+    ! dir_exists $WS_PATH && dir_create $WS_PATH
+    ! dir_exists $WWW_PATH && dir_create $WWW_PATH
+    ! dir_exists $EPM_BIN_PATH && dir_create $EPM_BIN_PATH
+    ! dir_exists $EPM_PKG_PATH && dir_create $EPM_PKG_PATH
+
+    config_add_exec "$PROGRAM_PATH_KEY" "$PROGRAM_PATH"
+    config_add_exec "$ROOT_PATH_KEY" "$ROOT_PATH"
+    config_add_exec "$BIN_PATH_KEY" "$BIN_PATH"
+    config_add_exec "$LIB_PATH_KEY" "$LIB_PATH"
+    config_add_exec "$ETC_PATH_KEY" "$ETC_PATH"
+    config_add_exec "$VAR_PATH_KEY" "$VAR_PATH"
+    config_add_exec "$LOG_PATH_KEY" "$LOG_PATH"
+    config_add_exec "$TMP_PATH_KEY" "$TMP_PATH"
+    config_add_exec "$DB_PATH_KEY" "$DB_PATH"
+    config_add_exec "$APP_PATH_KEY" "$APP_PATH"
+    config_add_exec "$WS_PATH_KEY" "$WS_PATH"
+    config_add_exec "$WWW_PATH_KEY" "$WWW_PATH"
+    config_add_exec "$EPM_BIN_PATH_KEY" "$EPM_BIN_PATH"
+    config_add_exec "$EPM_PKG_PATH_KEY" "$EPM_PKG_PATH"
+    config_add_exec "$EPM_PKG_SRV_KEY" "$INIT_URL"
+
+    file_executable "$EPM_CFG_FILE_PATH"    
+}
+
+init() {
+    log_debug "Executing the init command with \"$INIT_URL\""
+
+    init_check "$1"
+
+    command_start "Initializing $PROGRAM_NAME"
+
+    init_exec "$1"
+
+    command_ok
+}
+
+pull_check() {
+    USAGE_CMD="pull"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+ 
+    check
+
+    log_debug "Checking pull command preconditions"
+
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to pull"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+}
+
+pull_exec() {
+    PULL_PACKAGE=$1
+    PKG_PATH="$EPM_PKG_PATH/$PULL_PACKAGE"
+    EPM_PKG_SRV="$(config_get_exec $EPM_PKG_SRV_KEY)"
+    PKG_SRV_PATH="$EPM_PKG_SRV"
+
+    if ! dir_exists $PKG_PATH; then
+        log_debug "Pakage directory does not exist, now checking staging directory"
+        SHA1_FILE_ALL="$PULL_PACKAGE-$ENV_ALL.$SHA1_EXT"
+        PKG_FILE_ALL="$PULL_PACKAGE-$ENV_ALL.$PKG_EXT"
+        SHA1_FILE_NIX="$PULL_PACKAGE-$ENV_NIX.$SHA1_EXT"
+        PKG_FILE_NIX="$PULL_PACKAGE-$ENV_NIX.$PKG_EXT"
+        PKG_STG_PATH="$EPM_STG_PATH"
+
+        if file_exists "$PKG_STG_PATH/$SHA1_FILE_ALL" && file_exists "$PKG_STG_PATH/$PKG_FILE_ALL"; then
+            log_debug "Pakage for all environments exists in staging directory"
+            SHA1_STG_FILE_PATH="$PKG_STG_PATH/$SHA1_FILE_ALL"
+            PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_ALL"
+            PKG_ENV_PATH=$PKG_PATH/$ENV_ALL
+        elif file_exists "$PKG_STG_PATH/$SHA1_FILE_NIX" && file_exists "$PKG_STG_PATH/$PKG_FILE_NIX"; then
+            log_debug "Pakage for nix environment exists in staging directory"
+            SHA1_STG_FILE_PATH="$PKG_STG_PATH/$SHA1_FILE_NIX"
+            PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_NIX"
+            PKG_ENV_PATH=$PKG_PATH/$ENV_NIX
+        else
+            log_debug "Package does not exist in the staging directory, trying to fetch it from the server"
+            SHA1_SRV_ALL="$EPM_PKG_SRV/$SHA1_FILE_ALL"
+            PKG_SRV_ALL="$EPM_PKG_SRV/$PKG_FILE_ALL"
+            SHA1_SRV_NIX="$EPM_PKG_SRV/$SHA1_FILE_NIX"
+            PKG_SRV_NIX="$EPM_PKG_SRV/$PKG_FILE_NIX"
+
+            if url_file_exists "$SHA1_SRV_ALL" && url_file_exists "$PKG_SRV_ALL"; then
+                log_debug "Package for all environments exists in the server"
+                SHA1_STG_FILE_PATH="$PKG_STG_PATH/$SHA1_FILE_ALL"
+                PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_ALL"
+                SHA1_URL="$SHA1_SRV_ALL"
+                PKG_URL="$PKG_SRV_ALL"
+                PKG_ENV_PATH=$PKG_PATH/$ENV_ALL
+            elif url_file_exists "$SHA1_SRV_NIX" && url_file_exists "$PKG_SRV_NIX"; then
+                log_debug "Package for nix environment exists in the server"
+                SHA1_STG_FILE_PATH="$PKG_STG_PATH/$SHA1_FILE_NIX"
+                PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_NIX"
+                SHA1_URL="$SHA1_SRV_NIX"
+                PKG_URL="$PKG_SRV_NIX"
+                PKG_ENV_PATH=$PKG_PATH/$ENV_NIX
+            else
+                command_fail "Package \"$PULL_PACKAGE\" does not exist at \"$EPM_PKG_SRV\""
+            fi
+            
+            dir_create "$PKG_STG_PATH"
+            if ! url_file_download $SHA1_STG_FILE_PATH "$SHA1_URL" || ! url_file_download "$PKG_STG_FILE_PATH" "$PKG_URL"; then
+                file_delete $SHA1_STG_FILE_PATH $PKG_STG_FILE_PATH
+                command_fail "Unable to download package \"$PULL_PACKAGE\" to \"$PKG_STG_PATH\""
+            fi
+        fi
+
+        dir_create "$PKG_ENV_PATH"
+        archive_extract "$PKG_STG_FILE_PATH" "$PKG_ENV_PATH"
+        file_delete "$PKG_STG_FILE_PATH"
+        file_move "$SHA1_STG_FILE_PATH" "$PKG_PATH"
+    fi
+}
+
+pull() {
+    log_debug "Executing the pull command with \"$1\""
+
+    pull_check $1
+
+    command_start "Pulling package $1"
+
+    pull_exec $1
+
+    command_ok
+}
+
+uninstall_check() {
+    USAGE_CMD="uninstall"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking uninstall command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to uninstall"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+
+    PKG=$(data_get_package "$1") 
+    if empty $PKG; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package \"$1\" is not installed"
+    fi
+}
+
+uninstall_exec() {
+    UNINSTALL_PACKAGE="$1"
+
+    PKG_PATH="$EPM_PKG_PATH/$UNINSTALL_PACKAGE"
+    PKG_BIN_PATH="$BIN_PATH/$UNINSTALL_PACKAGE"
+    PKG_ENV_PATH=""
+    if file_exists $PKG_PATH/$ENV_NIX/$PKG_UNINSTALL_FILE_NAME; then
+        log_debug "Uninstall script found for nix environment"
+        PKG_ENV_PATH=$PKG_PATH/$ENV_NIX
+    elif file_exists $PKG_PATH/$ENV_ALL/$PKG_UNINSTALL_FILE_NAME; then
+        log_debug "Uninstall script found for all environment"
+        PKG_ENV_PATH=$PKG_PATH/$ENV_ALL
+    else
+        command_fail "Uninstall script was not found in $PKG_PATH"
+    fi
+
+    PKG_CONFIG_SH_PATH=$PKG_ENV_PATH/$PKG_CONFIG_FILE_NAME
+    PKG_UNINSTALL_SH_PATH=$PKG_ENV_PATH/$PKG_UNINSTALL_FILE_NAME
+
+    PKG_LOG_FILE="$EPM_LOG_PATH/uninstall_$UNINSTALL_PACKAGE.log"
+
+    log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_CFG_FILE_PATH\""
+    source $EPM_CFG_FILE_PATH 
+
+    if file_exists $PKG_CONFIG_SH_PATH; then
+        log_debug "Loading package configuration script located at \"$PKG_CONFIG_SH_PATH\""
+        source $PKG_CONFIG_SH_PATH  
+    fi
+
+    UNINSTALL_PACKAGE_TYPE=${PACKAGE_TYPE:-"single"}
+    case $UNINSTALL_PACKAGE_TYPE in
+        single)
+            log_debug "Executing single uninstall script"
+            if $PKG_UNINSTALL_SH_PATH &> "$PKG_LOG_FILE"; then
+                data_remove_exec $UNINSTALL_PACKAGE
+            else
+                command_fail "$PKG_LOG_FILE"
+            fi
+            ;;
+        bundle)
+            log_debug "Executing bundle uninstall script"
+            printf "\n"
+            $PKG_UNINSTALL_SH_PATH
+            data_remove_exec $UNINSTALL_PACKAGE
+            ;;
+        *)
+            command_fail "Invalid package type $INSTALL_PACKAGE_TYPE"
+            ;;
+    esac
+}
+
+uninstall_children() {
+    while read -r PKG; do
+        if ! empty $PKG; then
+            command_start "Uninstalling child package $PKG"
+            uninstall_exec $PKG
+            command_ok
+        fi
+    done <<< "$1"
+}
+
+uninstall() {
+    log_debug "Executing the uninstall command with \"$1\""
+
+    uninstall_check $1
+  
+    uninstall_children "$(data_list_child_packages $1)"
+
+    command_start "Uninstalling package $1"
+
+    uninstall_exec $1
+
+    command_ok
+}
+
+install_check() {
+    USAGE_CMD="install"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking install command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to install"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+
+    if data_has_package $1; then
+        yesNo "$1 already installed, reinstall? "
+    fi
+}
+
+install_exec() {
+    INSTALL_PACKAGE=$1
+    PKG_PATH="$EPM_PKG_PATH/$INSTALL_PACKAGE"
+
+    pull_exec "$INSTALL_PACKAGE"
+    if dir_exists $PKG_PATH/$ENV_NIX; then
+        log_debug "Proceding with nix environment package"
+        PKG_ENV=$ENV_NIX
+        PKG_ENV_PATH=$PKG_PATH/$PKG_ENV
+    elif dir_exists $PKG_PATH/$ENV_ALL; then
+        log_debug "Proceding with a all environment package"
+        PKG_ENV=$ENV_ALL
+        PKG_ENV_PATH=$PKG_PATH/$PKG_ENV
+    else 
+        command_fail "Invalid package folder $INSTALL_PACKAGE"
+    fi
+    PKG_CONFIG_SH_PATH=$PKG_ENV_PATH/$PKG_CONFIG_FILE_NAME
+    PKG_INSTALL_SH_PATH=$PKG_ENV_PATH/$PKG_INSTALL_FILE_NAME
+
+    log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_CFG_FILE_PATH\""
+    source $EPM_CFG_FILE_PATH 
+
+    if file_exists $PKG_CONFIG_SH_PATH; then
+        log_debug "Loading package configuration script located at \"$PKG_CONFIG_SH_PATH\""
+        source $PKG_CONFIG_SH_PATH  
+    fi
+
+    INSTALL_PACKAGE_TYPE=${PACKAGE_TYPE:-"single"}
+    case $INSTALL_PACKAGE_TYPE in
+        single)
+            PKG_LOG_FILE="$EPM_LOG_PATH/install_$INSTALL_PACKAGE.log"
+            log_debug "Executing single install script"
+            if $PKG_INSTALL_SH_PATH &> "$PKG_LOG_FILE"; then
+                data_add_exec $INSTALL_PACKAGE $PKG_ENV "single"
+            else
+                command_fail "$PKG_LOG_FILE"
+            fi
+            ;;
+        bundle)
+            log_debug "Executing bundle install script"
+            printf "\n"
+            $PKG_INSTALL_SH_PATH
+            data_add_exec $INSTALL_PACKAGE $PKG_ENV "bundle"
+            printf "Finished installing %s: " "$INSTALL_PACKAGE"
+            ;;
+        *)
+            command_fail "Invalid package type $INSTALL_PACKAGE_TYPE"
+    esac
+}
+
+install_children() {
+    while read -r PKG; do
+        if ! empty $PKG; then
+            command_start "Installing child package $PKG"
+            install_exec $PKG
+            command_ok
+        fi
+    done <<< "$1"
+}
+
+install() {
+    log_debug "Executing the install command with \"$1\""
+
+    install_check "$1"
+ 
+    PKG_CHILDREN=""
+    if data_has_package "$PKG"; then
+        log_debug "Package \"$1\" is already installed, uninstalling it"
+
+        PKG_CHILDREN="$(data_list_child_packages $1)"
+        uninstall_children "$PKG_CHILDREN"
+
+        command_start "Uninstalling package $1"
+
+        uninstall_exec "$1"
+
+        command_ok    
+    elif is_child_package "$1"; then
+        PARENT_PKG="$(get_parent_package "$1")"
+
+        if ! data_has_package "$PARENT_PKG"; then
+            log_debug "Parent package is not installed, installing it"
+
+            command_start "Installing package $PARENT_PKG"
+
+            install_exec "$PARENT_PKG"
+
+            command_ok
+        fi
+    fi
+
+    command_start "Installing package $1"
+
+    install_exec "$1"
+
+    command_ok
+
+    install_children "$PKG_CHILDREN"
+}
+
+pack_check() {
+    USAGE_CMD="pack"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking pack command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to pack"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+
+    PKG_PATH=$EPM_PKG_PATH/$1
+    if ! dir_exists $PKG_PATH; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package $1 does not exist"
+    fi
+}
+
+pack_build() {
+    PKG=$1
+    PKG_ENV=$2
+
+    PKG_SRC_PATH="$EPM_PKG_PATH/$PKG/$PKG_ENV"
+    PKG_SRV_PACK_PATH=$PKG_SRC_PATH/$PKG_PACK_FILE_NAME
+    PKG_FILE_NAME="$PKG-$PKG_ENV.$PKG_EXT"
+    PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
+    SHA1_FILE_NAME="$PKG-$PKG_ENV.$SHA1_EXT"
+    SHA1_FILE_PATH="$EPM_STG_PATH/$SHA1_FILE_NAME"
+
+    if file_exists $PKG_SRV_PACK_PATH; then
+        log_debug "Executing package \"$PKG\" custom pack script"
+        PKG_LOG_FILE="$EPM_LOG_PATH/pack_$PKG.log"
+        if ! $PKG_SRV_PACK_PATH &> "$PKG_LOG_FILE"; then
+            command_fail "$PKG_LOG_FILE"
+        fi
+    fi
+
+    dir_create $EPM_STG_PATH 
+    archive_create "$PKG_FILE_PATH" "$PKG_SRC_PATH"
+    dir_checksum $PKG_SRC_PATH > $SHA1_FILE_PATH
+}
+
+pack_env() {
+    PKG=$1
+    PKG_PATH="$EPM_PKG_PATH/$PKG"
+
+    log_debug "Obtaining the package \"$PKG\" environment list"
+    PKG_ENV_LIST=()
+    if dir_exists "$PKG_PATH/$ENV_ALL"; then
+        log_debug "Adding all environment to the list"
+        PKG_ENV_LIST+=($ENV_ALL)
+    else
+        if dir_exists "$PKG_PATH/$ENV_NIX"; then
+            log_debug "Adding nix environment to the list"
+            PKG_ENV_LIST+=($ENV_NIX)
+        fi
+        if dir_exists "$PKG_PATH/$ENV_WIN"; then
+            log_debug "Adding win environment to the list"
+            PKG_ENV_LIST+=($ENV_WIN)
+        fi
+    fi
+
+    IFS=" "; echo "${PKG_ENV_LIST[*]}"
+}
+
+pack_exec() {
+    PACK_PACKAGE=$1
+    PACK_ENV=$2
+    PACK_ENV_SPV=${PACK_ENV:-$(pack_env $PACK_PACKAGE)}
+
+    log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_CFG_FILE_PATH\""
+    source $EPM_CFG_FILE_PATH 
+    for ENV in $PACK_ENV_SPV; do
+        pack_build $PACK_PACKAGE $ENV
+    done
+}
+
+pack() {
+    log_debug "Executing the pack command with \"$1\""
+
+    pack_check $1
+    
+    command_start "Packing package $1"
+    
+    pack_exec
+    
+    command_ok
+}
+
+push_check() {
+    USAGE_CMD="push"
+    USAGE_CMD_SYNOPSIS="<package>|--all"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking push command preconditions"
+
+    case $1 in
+        --all)
+            ;;
+        --*)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid option: $1"
+            ;;
+        "")
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to push or an option"
+            ;;                
+        *)
+            PKG_PATH=$EPM_PKG_PATH/$1
+            if ! is_package "$1"; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+            elif !dir_exists $PKG_PATH; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package $1 does not exist"
+            fi
+    esac
+}
+
+push_exec() {
+    PUSH_PACKAGE=$1
+    PUSH_ENV=$2
+    PUSH_ENV_SPV=${PUSH_ENV:-$(push_env $PUSH_PACKAGE)}
+    PKG_PATH="$EPM_PKG_PATH/$PUSH_PACKAGE"
+    EPM_PKG_SRV="$(config_get_exec $EPM_PKG_SRV_KEY)"
+    for ENV in $PUSH_ENV_SPV; do
+        log_debug "Pushing package \"$PUSH_PACKAGE\" $ENV environment"
+
+        SHA1_FILE_NAME="$PUSH_PACKAGE-$ENV.$SHA1_EXT"
+        SHA1_FILE_PATH="$EPM_STG_PATH/$SHA1_FILE_NAME"
+        SHA1_FILE_URL="$EPM_PKG_SRV/$SHA1_FILE_NAME"
+        PKG_FILE_NAME="$PUSH_PACKAGE-$ENV.$PKG_EXT"
+        PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
+        PKG_FILE_URL="$EPM_PKG_SRV/$PKG_FILE_NAME"
+
+        url_file_upload "$SHA1_FILE_PATH" "$SHA1_FILE_URL"
+        file_move $SHA1_FILE_PATH $PKG_PATH
+        url_file_upload "$PKG_FILE_PATH" "$PKG_FILE_URL"
+        file_delete $PKG_FILE_PATH 
+    done
+}
+
+push_env() {
+    PKG=$1
+    ENV_SPV=$(pack_env $PKG)
+ 
+    echo $ENV_SPV
+}
+
+push() {
+    log_debug "executing the push command with \"$1\""
+
+    push_check $1
+
+    case $1 in
+        --all)
+            log_debug "Pushing all the packages"
+            PKG_LIST=$EPM_PKG_PATH/*
+            ;;
+        *)
+            log_debug "Pushing \"$1\" package"
+            PKG_LIST=$EPM_PKG_PATH/$1
+            ;;
+    esac
+
+    for PKG_PATH in $PKG_LIST; do
+        PKG_NAME="$(basename $PKG_PATH)"
+        PKG_ENV=$(push_env $1)
+        PKG_PACK_LOG_FILE="$EPM_LOG_PATH/pack_$PKG_NAME.log"
+        PKG_PUSH_LOG_FILE="$EPM_LOG_PATH/push_$PKG_NAME.log"
+
+        command_start "Pushing package \"$PKG_NAME\""
+
+        pack_exec "$PKG_NAME" "$PKG_ENV"
+        push_exec "$PKG_NAME" "$PKG_ENV"
+
+        command_ok
+    done
+}
+
+update_check() {
+    USAGE_CMD="update"
+    USAGE_CMD_SYNOPSIS="<package>|--all"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking update command preconditions"
+
+    case $1 in
+        --all)
+            ;;
+        --*)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid option: $1"
+            ;;
+        "")
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to update or an option"
+            ;;                
+        *)
+            PKG_PATH=$EPM_PKG_PATH/$1
+            if ! is_package "$1"; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+            elif ! dir_exists $PKG_PATH; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package $1 does not exist"
+            fi
+    esac
+}
+
+package_updated() {
+    PKG="$1"
+    PKG_ENV="$2"
+    EPM_PKG_SRV="$(config_get_exec $EPM_PKG_SRV_KEY)"
+    SHA1_FILE_NAME="$PKG-$PKG_ENV.$SHA1_EXT"
+    SHA1_FILE_PATH=$EPM_PKG_PATH/$PKG/$SHA1_FILE_NAME
+    SHA1_TMP_FILE_PATH=$TMP_PATH/$SHA1_FILE_NAME
+    SHA1_URL="$EPM_PKG_SRV/$SHA1_FILE_NAME"
+
+    if file_exists $SHA1_FILE_PATH; then
+        if url_file_download "$SHA1_TMP_FILE_PATH" "$SHA1_URL"; then
+            if ! file_equal $SHA1_FILE_PATH $SHA1_TMP_FILE_PATH; then
+                return 0
+            fi                                
+        fi
+    elif url_file_download "$SHA1_FILE_PATH" "$SHA1_URL"; then
+        return 0
+    fi
+    
+    return 1
+}
+
+update_exec() {
+    while read -r LINE; do
+        PKG="$(get_package "$LINE")"
+        ENV="$(get_env "$LINE")"
+        if package_updated $PKG $ENV; then
+            echo "$PKG updated"
+        fi
+    done <<< "$(data_list)"
+}
+
+update() {
+    log_debug "Executing the update command"
+
+    update_check
+
+    command_start "Updating dependencies"
+
+    update_exec
+
+    command_ok
+}
+
+list_check() {
+    USAGE_CMD="list"
+    USAGE_CMD_SYNOPSIS=""
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking list command preconditions"
+}
+
+list_exec() {
+    data_list_packages
+}
+
+list() {
+    log_debug "Executing the list command"
+
+    list_check
+
+    list_exec
+}
+
+version() {
+    log_debug "Executing the version command"
+
+    echo -e "$PROGRAM_NAME version $VERSION_NUMBER"
+}
+
+manual_page() {
+    MANUAL_CMD=$1
+    COMMAND_UPPER=${MANUAL_CMD^^}
+    MANUAL_NAME=$2
+    MANUAL_SYNOPSIS=$3
+    MANUAL_DESCRIPTION=$4
+    
+    HEADER_LEFT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    HEADER_CENTER_MSG="${PROGRAM_NAME^} Manual"
+    HEADER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    let HEADER_CENTER_COLS=$(( (${#HEADER_CENTER_MSG} + $TERM_COLS) / 2))-${#HEADER_LEFT_MSG}
+    let HEADER_RIGHT_COLS=$TERM_COLS-${#HEADER_RIGHT_MSG}-$HEADER_CENTER_COLS-1
+
+    FOOTER_LEFT_MSG="$PROGRAM_NAME $VERSION_NUMBER"
+    FOOTER_CENTER_MSG="$VERSION_DATE"
+    FOOTER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    let FOOTER_CENTER_COLS=$(( (${#FOOTER_CENTER_MSG} + $TERM_COLS) / 2))-${#FOOTER_LEFT_MSG}
+    let FOOTER_RIGHT_COLS=$TERM_COLS-${#FOOTER_RIGHT_MSG}-$FOOTER_CENTER_COLS-1
+
+    clear
+
+    printf "%s%${HEADER_CENTER_COLS}s%${HEADER_RIGHT_COLS}s\n\n\n\n" "$HEADER_LEFT_MSG" "$HEADER_CENTER_MSG" "$HEADER_RIGHT_MSG"
+    printf "%s%s%s\n" "$TERM_BOLD$TERM_RED" "NAME" "$TERM_NORMAL"
+    printf "\t%s-%s - %s\n\n" "$PROGRAM_NAME" "$MANUAL_CMD" "$MANUAL_NAME"
+    printf "%s%s%s\n" "$TERM_BOLD$TERM_RED" "SYNOPSIS" "$TERM_NORMAL"
+    printf "\t%s%s%s %s\n\n\n" "$TERM_BOLD$TERM_YELLOW" "$PROGRAM_FILE $MANUAL_CMD" "$TERM_NORMAL" "$MANUAL_SYNOPSIS"
+    printf "%s%s%s\n" "$TERM_BOLD$TERM_RED" "DESCRIPTION" "$TERM_NORMAL"
+    printf "\t%s\n\n\n" "$MANUAL_DESCRIPTION"
+    printf "%s%${FOOTER_CENTER_COLS}s%${FOOTER_RIGHT_COLS}s\n" "$FOOTER_LEFT_MSG" "$FOOTER_CENTER_MSG" "$FOOTER_RIGHT_MSG"
+}
+
+help_init() {
+    COMMAND="init"
+    NAME="Inits ${PROGRAM_NAME}"
+    SYNOPSIS="<URL>"
+    DESCRIPTION="Initializes ${PROGRAM_NAME} store in the current directory"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_pull() {
+    COMMAND="pull"
+    NAME="Pulls a package from the $PROGRAM_NAME server"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="The package is retrieved from the $PROGRAM_NAME server only if is not already available localy in the pakage path ($EPM_PKG_PATH) or in the staging path ($EPM_STG_PATH). After obtaining the package the data is decompressed to the pakage path"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_install() {
+    COMMAND="install"
+    NAME="Installs a $PROGRAM_NAME package"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Installs a package. This command executes a pull if the package does not exists locally. Also, if the package is already installed it is uninstalled first"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_uninstall() {
+    COMMAND="uninstall"
+    NAME="Uninstalls a $PROGRAM_NAME package"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Uninstalls a package. If this package has child packages they are uninstalled also. This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_pack() {
+    COMMAND="pack"
+    NAME="Creates a $PROGRAM_NAME package"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Creates a package for all the environments listed in that package path. The package is composed of two files, one stores the package data (binaries and configurations) and other is the computed checksum of the package directory. If the package has a custom build script it is used to create the package binary"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_push() {
+    echo "TODO"
+}
+
+help_update() {
+    echo "TODO"
+}
+
+help_list() {
+    COMMAND="list"
+    NAME="Lists all ${PROGRAM_NAME} packages installed"
+    SYNOPSIS=""
+    DESCRIPTION="Lists all ${PROGRAM_NAME} packages installed in the system"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_version() {
+    COMMAND="version"
+    NAME="Displays $PROGRAM_NAME version"
+    SYNOPSIS=""
+    DESCRIPTION="Displays program version"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_help() {
+    COMMAND="help"
+    NAME="Display help information about $PROGRAM_NAME"
+    SYNOPSIS="[COMMAND]"
+    DESCRIPTION="With no COMMAND given, the synopsis of the $PROGRAM_NAME command and a list of the most commonly used ${PROGRAM_NAME^} commands are printed on the standard output"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_invalid_command() {
+    printf "No manual entry for $1"
+}
+
+help_check() {
+    USAGE_CMD="help"
+    USAGE_CMD_SYNOPSIS="<COMMAND>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    log_debug "Checking help command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must especify a command"
+    fi
+}
+
+help() {
+    log_debug "Executing the help command for \"$1\""
+
+    help_check $1
+
+    case $1 in
+        version)
+            help_version
+            ;;
+        help)
+            help_help
+            ;;
+        init)
+            help_init
+            ;;
+        pull)
+            help_pull
+            ;;
+        install)
+            help_install
+            ;;
+        uninstall)
+            help_uninstall
+            ;;
+        pack)
+            help_pack
+            ;;
+        push)
+            help_push
+            ;;
+        update)
+            help_update
+            ;;
+        list)
+            help_list
+            ;;
+        *)
+            help_invalid_command "$1\n"
+            ;;
+    esac
+}
+
+error_invalid_command() {
+    printf "$PROGRAM_FILE: '$1' is not a $PROGRAM_NAME command. See '$PROGRAM_FILE --help'."
+    exit 1
+}
+
+sys_init
+
+CMD=$1
+case $CMD in
+    config)
+        config $2 $3 $4
+        ;;
+    init)
+        init $2
+        ;;
+    pull)
+        pull $2
+        ;;
+    -i|install)
+        install $2
+        ;;
+    -u|uninstall)
+        uninstall $2
+        ;;
+    pack)
+        pack $2
+        ;;
+    push)
+        push $2
+        ;;
+    update)
+        update $2
+        ;;
+    list)
+        list
+        ;;
+    --version|version)
+        version    
+        ;;
+    --help|help)
+        help $2
+        ;;
+    "")
+        usage
+        ;;
+    *)
+        error_invalid_command "$CMD"
+    ;;
+esac
