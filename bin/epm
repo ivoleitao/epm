@@ -122,9 +122,26 @@ log_fatal() {
     log "$FATAL_LEVEL_NAME" "[FATAL] - $1"
 }
 
+save_cursor() {
+    tput sc
+}
+
+restore_cursor() {
+    tput rc
+}
+
+clean_to_end_line() {
+    tput el
+}
+
 empty() {
     log_trace "Checking if parameter \"$1\" is empty"
     test -z "$1"
+}
+
+replace() {
+    log_trace "Replacing \"$2\" with \"$3\" in \"$1\""
+    sed -r "s/$2/$3/g" <<< $1 
 }
 
 file_exists() {
@@ -234,11 +251,77 @@ yesNo() {
     done
 }
 
+print_table2() {
+    HEADER_COL1="$1"
+    HEADER_COL2="$2"
+    COL1_LEN=0
+    COL2_LEN=0
+    ROW_DATA=()
+    while read -r ROW; do
+        COL1=$(cut -d' ' -f1 <<< "$ROW")
+        COL2=$(cut -d' ' -f2 <<< "$ROW")
+        TMP1=${#COL1}
+        TMP2=${#COL2}
+        COL1_LEN=$(( TMP1 > COL1_LEN ? TMP1 : COL1_LEN ))
+        COL2_LEN=$(( TMP2 > COL2_LEN ? TMP2 : COL2_LEN ))
+        ROW_DATA+=("$COL1 $COL2")
+    done
+
+    if [ "${#ROW_DATA}" -gt "0" ]; then
+        printf "$TERM_BOLD$TERM_YELLOW%-${COL1_LEN}s$TERM_NORMAL|$TERM_BOLD$TERM_YELLOW%-${COL2_LEN}s$TERM_NORMAL\n" "$HEADER_COL1" "$HEADER_COL2"
+        
+        for ROW in "${ROW_DATA[@]}"; do
+            COL1=$(cut -d' ' -f1 <<< "$ROW")
+            COL2=$(cut -d' ' -f2 <<< "$ROW")
+
+            printf "%-${COL1_LEN}s|%-${COL2_LEN}s\n" "$COL1" "$COL2"
+        done
+    fi
+}
+
+print_table3() {
+    HEADER_COL1="$1"
+    HEADER_COL2="$2"
+    HEADER_COL3="$3"
+    COL1_LEN=0
+    COL2_LEN=0
+    COL3_LEN=0
+    ROW_DATA=()
+    while read -r ROW; do
+        COL1=$(cut -d' ' -f1 <<< "$ROW")
+        COL2=$(cut -d' ' -f2 <<< "$ROW")
+        COL3=$(cut -d' ' -f3 <<< "$ROW")
+        TMP1=${#COL1}
+        TMP2=${#COL2}
+        TMP3=${#COL3}
+        COL1_LEN=$(( TMP1 > COL1_LEN ? TMP1 : COL1_LEN ))
+        COL2_LEN=$(( TMP2 > COL2_LEN ? TMP2 : COL2_LEN ))
+        COL3_LEN=$(( TMP3 > COL3_LEN ? TMP3 : COL3_LEN ))
+        ROW_DATA+=("$COL1 $COL2 $COL3")
+    done
+
+    if [ "${#ROW_DATA}" -gt "0" ]; then
+        printf "$TERM_BOLD$TERM_YELLOW%-${COL1_LEN}s$TERM_NORMAL|$TERM_BOLD$TERM_YELLOW%-${COL2_LEN}s$TERM_NORMAL|$TERM_BOLD$TERM_YELLOW%-${COL3_LEN}s$TERM_NORMAL\n" "$HEADER_COL1" "$HEADER_COL2" "$HEADER_COL3"
+        
+        for ROW in "${ROW_DATA[@]}"; do
+            COL1=$(cut -d' ' -f1 <<< "$ROW")
+            COL2=$(cut -d' ' -f2 <<< "$ROW")
+            COL2=$(cut -d' ' -f3 <<< "$ROW")
+
+            printf "%-${COL1_LEN}s|%-${COL2_LEN}s|%-${COL3_LEN}s\n" "$COL1" "$COL2" "$COL3"
+        done
+    fi
+}
+
 command_start() {
     printf "%s: " "$1"
+    save_cursor
+    printf "[$TERM_BLUE""RUNNING""$TERM_NORMAL]"
 }
 
 command_ok() {
+    restore_cursor
+    clean_to_end_line
     if empty $1; then
         printf "[$TERM_GREEN""OK""$TERM_NORMAL]\n"
     else
@@ -247,6 +330,8 @@ command_ok() {
 }
 
 command_fail() {
+    restore_cursor
+    clean_to_end_line
     printf "[$TERM_RED""FAIL""$TERM_NORMAL][%s]\n" "$1"
     exit 1
 }
@@ -260,13 +345,20 @@ error() {
 usage() { 
     log_trace "Printing usage"
 
-    printf "usage:$PROGRAM_FILE [--version] [--help] <command> <args>\n"
-    printf "${PROGRAM_FILE^} commands:"
-    printf "\tinit\tInitializes the environment\n"
-    printf "\tconfig\tGet and set $PROGRAM_NAME options\n"
-    printf "\tpull\tFetches a package\n"
-    printf "\tpush\tSends a new version of the package to the package server\n"
-    printf "\tlist\tLists all the packages installed locally\n"
+    printf "usage:$PROGRAM_FILE [--version] [--help] | <command> <args>\n"
+    printf "${PROGRAM_FILE^} commands:\n"
+    printf "\tinit\t\tInitializes the environment\n"
+    printf "\tconfig\t\tGet and set $PROGRAM_NAME options\n"
+    printf "\tpull\t\tFetches a package\n"
+    printf "\tinstall\t\tInstalls a package\n"
+    printf "\tuninstall\tUninstalls a package\n"
+    printf "\tpurge\t\tPurges a package\n"
+    printf "\tpack\t\tCreates a package\n"
+    printf "\tpush\t\tSends a new version of the package to the package server\n"
+    printf "\tupdate\t\tUpdates one or more packages\n"
+    printf "\tlist\t\tLists all the packages installed locally\n"
+    printf "\tversion\t\tDisplays program version\n"
+    printf "\thelp\t\tDisplays program help information\n"
 }
 
 command_usage() {
@@ -277,58 +369,63 @@ command_usage() {
     
     log_trace "Printing command usage with message \"$USAGE_MSG\""
 
-    ! empty "$USAGE_MSG" && printf "%s\n\n" "$USAGE_MSG" 
+    ! empty "$USAGE_MSG" && printf "%b\n\n" "$USAGE_MSG" 
     printf "usage: %s %s %s\n" "$PROGRAM_NAME" "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS"
-    ! empty "$USAGE_CMD_DESCRIPTION" && printf "\n%s\n" "$USAGE_CMD_DESCRIPTION" 
+    ! empty "$USAGE_CMD_DESCRIPTION" && printf "%b\n" "$USAGE_CMD_DESCRIPTION" 
     exit 1
 }
 
 check() {
     log_trace "Checking base conditions"
-    if ! dir_exists $EPM_PATH; then
-        printf "fatal: Not a %s folder:%s" "$PROGRAM_NAME" "$EPM_DIR"
+    if ! file_exists $EPM_CFG_FILE_PATH; then
+        printf "fatal: Not a %s folder\n" "$PROGRAM_NAME"
         exit 1
     fi
 }
 
 config_exists() {
-    log_trace "Checking if \"$1\" key exists in \"$EPM_CFG_FILE_PATH\""
-    grep -q "export $1=" $EPM_CFG_FILE_PATH
+    log_trace "Checking if \"$1\" name exists in \"$EPM_CFG_FILE_PATH\""
+    grep -q "export $1=" "$EPM_CFG_FILE_PATH"
 }
 
 config_add_exec() {
-    log_trace "Adding key \"$1\" with value \"$2\" to \"$EPM_CFG_FILE_PATH\""
-    echo "export $1=$2" >> $EPM_CFG_FILE_PATH
+    log_trace "Adding name \"$1\" with value \"$2\" to \"$EPM_CFG_FILE_PATH\""
+    echo "export $1=$2" >> "$EPM_CFG_FILE_PATH"
 }
 
 config_remove_exec() {
-    log_trace "Removing key \"$1\" from \"$EPM_CFG_FILE_PATH\""
-    sed -i "/export $1=/d" $EPM_CFG_FILE_PATH
+    log_trace "Removing name \"$1\" from \"$EPM_CFG_FILE_PATH\""
+    sed -i "/export $1=/d" "$EPM_CFG_FILE_PATH"
 }
 
 config_get_exec() {
-    log_trace "Getting key \"$1\" value from \"$EPM_CFG_FILE_PATH\""
-    grep -Po "(?<=^export $1=).*" $EPM_CFG_FILE_PATH
+    log_trace "Getting name \"$1\" value from \"$EPM_CFG_FILE_PATH\""
+    grep -Po "(?<=^export $1=).*" "$EPM_CFG_FILE_PATH"
+}
+
+config_list_exec() {
+    log_trace "Listing variables in \"$EPM_CFG_FILE_PATH\""
+    sed -r "s|export (.*)=(.*)|\1 \2|" "$EPM_CFG_FILE_PATH"
 }
 
 config_set_exec() {
-    log_trace "Setting key \"$1\" with value \"$2\" in \"$EPM_CFG_FILE_PATH\""
-    sed -i "s|export $1=.*|export $1=$2|g" $EPM_CFG_FILE_PATH
+    log_trace "Setting name \"$1\" with value \"$2\" in \"$EPM_CFG_FILE_PATH\""
+    sed -i "s|export $1=.*|export $1=$2|g" "$EPM_CFG_FILE_PATH"
 }
 
 data_add_exec() {
     log_trace "Adding package \"$1\" with env \"$2\" and type \"$3\" value to \"$EPM_DAT_FILE_PATH\""
-    echo "$1 $2 $3" >> $EPM_DAT_FILE_PATH
+    echo "$1 $2 $3" >> "$EPM_DAT_FILE_PATH"
 }
 
 data_remove_exec() {
     log_trace "Removing package \"$1\" from \"$EPM_DAT_FILE_PATH\""
-    sed -i "/$1 /d" $EPM_DAT_FILE_PATH
+    sed -i "/$1 /d" "$EPM_DAT_FILE_PATH"
 }
 
 data_get_exec() {
     log_trace "Getting package \"$1\" info from \"$EPM_DAT_FILE_PATH\""
-    sed -n "/^$1.*$/p" $EPM_DAT_FILE_PATH
+    sed -n "/^$1.*$/p" "$EPM_DAT_FILE_PATH"
 }
 
 get_parent_package() {
@@ -421,32 +518,34 @@ data_set_exec() {
     sed -i "s|$1.*|$1 $2 $3|g" $EPM_DAT_FILE_PATH
 }
 
-config_usage() {
-    log_trace "Printing config usage"
-    printf "${PROGRAM_FILE} config commands:\n"
-    printf "\tadd\tAdds a key/value\n"
-    printf "\tremove\tRemoves a key\n"
-    printf "\tget\tGets the value of a key\n"
-    printf "\tset\tSets the value of a key\n"
+config_options() {
+    OPTION_ADD="\t--add\t\tadd a new variable: name value"
+    OPTION_REMOVE="\t--remove\tremove a variable: name"
+    OPTION_GET="\t--get\t\tget value: name"
+    OPTION_SET="\t--set\t\tset value: name value"
+    OPTION_LIST="\t--list\t\tlists variables"
+    OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_GET\n$OPTION_SET"
+
+    printf "%b\n" "$OPTIONS"
 }
 
 config_add_check() {
-    USAGE_CMD="config add"
-    USAGE_CMD_SYNOPSIS="<key> <value>"
+    USAGE_CMD="config --add"
+    USAGE_CMD_SYNOPSIS="<name> <value>"
     USAGE_CMD_DESCRIPTION=""
    
     log_debug "Checking config-add command preconditions"
 
-    if empty $1 || empty $2; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key and a value"
+    if empty "$1" || empty "$2"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name and a value"
     fi
 }
 
 config_add() {
-    CONFIG_ADD_NAME=$1
-    CONFIG_ADD_VALUE=$2    
+    CONFIG_ADD_NAME="$1"
+    CONFIG_ADD_VALUE="$2"    
 
-    log_debug "Executing config-add command"
+    log_debug "Executing config-add command with \"$CONFIG_ADD_NAME\" and \"$CONFIG_ADD_VALUE\""
 
     config_add_check "$CONFIG_ADD_NAME" "$CONFIG_ADD_VALUE"
 
@@ -458,23 +557,23 @@ config_add() {
 }
 
 config_remove_check() {
-    USAGE_CMD="config remove"
-    USAGE_CMD_SYNOPSIS="<key>"
+    USAGE_CMD="config --remove"
+    USAGE_CMD_SYNOPSIS="<name>"
     USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking config-remove command preconditions"
 
-    if empty $1; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name"
     fi
 }
 
 config_remove() {
-    CONFIG_REMOVE_NAME=$1
+    CONFIG_REMOVE_NAME="$1"
 
-    log_debug "Executing config-remove command"
+    log_debug "Executing config-remove command with \"$CONFIG_REMOVE_NAME\""
 
-    config_remove_check $CONFIG_REMOVE_NAME
+    config_remove_check "$CONFIG_REMOVE_NAME"
 
     if config_exists "$CONFIG_REMOVE_NAME"; then
         config_remove_exec "$CONFIG_REMOVE_NAME"
@@ -482,53 +581,53 @@ config_remove() {
 }
 
 config_get_check() {
-    USAGE_CMD="config get"
-    USAGE_CMD_SYNOPSIS="<key>"
+    USAGE_CMD="config --get"
+    USAGE_CMD_SYNOPSIS="<name>"
     USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking config-get command preconditions"
 
-    if empty $1; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name"
     fi
 
-    if ! config_exists $1; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Key $1 does not exists"
+    if ! config_exists "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Variable \"$1\" does not exists"
     fi
 }
 
 config_get() {
-    CONFIG_GET_NAME=$1
+    CONFIG_GET_NAME="$1"
 
-    log_debug "Executing config-get command"
+    log_debug "Executing config-get command with \"$CONFIG_GET_NAME\""
 
-    config_get_check $CONFIG_GET_NAME
+    config_get_check "$CONFIG_GET_NAME"
 
-    config_get_exec $CONFIG_GET_NAME
+    config_get_exec "$CONFIG_GET_NAME"
 }
 
 config_set_check() {
-    USAGE_CMD="config set"
-    USAGE_CMD_SYNOPSIS="<key> <value>"
+    USAGE_CMD="config --set"
+    USAGE_CMD_SYNOPSIS="<name> <value>"
     USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking config-set command preconditions"
    
-    if empty $1 || empty $2; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key and a value"
+    if empty "$1" || empty "$2"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name and a value"
     fi
 }
 
 config_set() {
-    CONFIG_SET_NAME=$1
-    CONFIG_SET_VALUE=$2
+    CONFIG_SET_NAME="$1"
+    CONFIG_SET_VALUE="$2"
 
-    log_debug "Executing config-set command"
+    log_debug "Executing config-set command with \"$CONFIG_SET_NAME\" and \"$CONFIG_SET_NAME\""
 
-    config_set_check $CONFIG_SET_NAME $CONFIG_SET_VALUE
+    config_set_check "$CONFIG_SET_NAME" "$CONFIG_SET_VALUE"
 
     if config_exists "$CONFIG_SET_NAME"; then
-        config_set_exec $CONFIG_SET_NAME $CONFIG_SET_VALUE
+        config_set_exec "$CONFIG_SET_NAME" "$CONFIG_SET_VALUE"
     else
         config_add_exec "$CONFIG_SET_NAME" "$CONFIG_SET_VALUE"
     fi
@@ -536,58 +635,86 @@ config_set() {
 
 config_default_check() {
     USAGE_CMD="config"
-    USAGE_CMD_SYNOPSIS="<key> [value]"
+    USAGE_CMD_SYNOPSIS="<name> [value]"
     USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking config-default command preconditions"
     
     if empty $1; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a key"
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name"
     fi
 }
 
 config_default() {
-    CONFIG_DEFAULT_NAME=$1
-    CONFIG_DEFAULT_VALUE=$2    
+    CONFIG_DEFAULT_NAME="$1"
+    CONFIG_DEFAULT_VALUE="$2"   
     
-    log_debug "Executing the config default command"
+    log_debug "Executing the config-default command with \"$CONFIG_DEFAULT_NAME\" and \"$CONFIG_DEFAULT_VALUE\""
 
-    config_default_check $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+    config_default_check "$CONFIG_DEFAULT_NAME" "$CONFIG_DEFAULT_VALUE"
 
-    if empty $CONFIG_DEFAULT_VALUE; then
-        config_get_exec $CONFIG_DEFAULT_NAME
-    elif config_exists $CONFIG_DEFAULT_NAME; then
-        config_set_exec $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+    if empty "$CONFIG_DEFAULT_VALUE"; then
+        config_get_exec "$CONFIG_DEFAULT_NAME"
+    elif config_exists "$CONFIG_DEFAULT_NAME"; then
+        config_set_exec "$CONFIG_DEFAULT_NAME" "$CONFIG_DEFAULT_VALUE"
     else        
-        config_add_exec $CONFIG_DEFAULT_NAME $CONFIG_DEFAULT_VALUE
+        config_add_exec "$CONFIG_DEFAULT_NAME" "$CONFIG_DEFAULT_VALUE"
+    fi
+}
+
+config_list_check() {
+    USAGE_CMD="config --list"
+    USAGE_CMD_SYNOPSIS=""
+    USAGE_CMD_DESCRIPTION=""
+
+    log_debug "Checking config-list command preconditions"
+}
+
+config_list() {
+    log_debug "Executing the config-list command"
+
+    config_list_check
+
+    config_list_exec | print_table2 "Variable" "Value"
+}
+
+config_check() {
+    USAGE_CMD="config"
+    USAGE_CMD_SYNOPSIS="[name] <value> | [option]"
+    USAGE_CMD_DESCRIPTION="\nOptions:\n$(config_options)"
+
+    check
+
+    log_debug "Checking config command preconditions"
+    
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" ""
     fi
 }
 
 config() {
-    CONFIG_CMD=$1    
+    log_debug "Executing the config command with \"$1\""
 
-    log_debug "Executing the config command with \"$CONFIG_CMD\""
-
-    check
+    config_check "$1" 
     
-    case $CONFIG_CMD in
+    case "$1" in
         --add)
-            config_add $2 $3
+            config_add "$2" "$3"
             ;;
         --remove)
-            config_remove $2
+            config_remove "$2"
             ;;
         --get)
-            config_get $2
+            config_get "$2"
             ;;
         --set)
-            config_set $2 $3
-            ;;
-        "")
-            config_usage
+            config_set "$2" "$3"
             ;;                
+        --list)
+            config_list
+            ;;
         *)
-            config_default $1 $2
+            config_default "$1" "$2"
             ;;
     esac
 }
@@ -859,6 +986,60 @@ uninstall() {
     command_ok
 }
 
+purge_check() {
+    USAGE_CMD="purge"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking purge command preconditions"
+
+    if empty $1; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to purge"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+
+    PKG=$(data_get_package "$1") 
+    PKG_PATH="$EPM_PKG_PATH/$1"
+    if empty $PKG && !dir_exists $PKG_PATH; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package \"$1\" does not exist"
+    fi
+}
+
+purge_exec() {
+    PURGE_PACKAGE="$1"
+
+    PKG_PATH="$EPM_PKG_PATH/$PURGE_PACKAGE"
+    if dir_exists "$PKG_PATH"; then
+        dir_delete "$PKG_PATH" 
+    fi
+}
+
+purge() {
+    log_debug "Executing the purge command with \"$1\""
+
+    purge_check $1
+    
+    PKG=$(data_get_package "$1") 
+    if !empty $PKG; then
+        uninstall_children "$(data_list_child_packages $1)"
+
+        command_start "Uninstalling package $1"
+
+        uninstall_exec $1
+
+        command_ok
+    fi
+
+    command_start "Purging package $1"
+
+    purge_exec $1
+
+    command_ok
+}
+
 install_check() {
     USAGE_CMD="install"
     USAGE_CMD_SYNOPSIS="<package>"
@@ -885,11 +1066,11 @@ install_exec() {
 
     pull_exec "$INSTALL_PACKAGE"
     if dir_exists $PKG_PATH/$ENV_NIX; then
-        log_debug "Proceding with nix environment package"
+        log_debug "Proceding with nix package"
         PKG_ENV=$ENV_NIX
         PKG_ENV_PATH=$PKG_PATH/$PKG_ENV
     elif dir_exists $PKG_PATH/$ENV_ALL; then
-        log_debug "Proceding with a all environment package"
+        log_debug "Proceding with all package"
         PKG_ENV=$ENV_ALL
         PKG_ENV_PATH=$PKG_PATH/$PKG_ENV
     else 
@@ -1136,7 +1317,7 @@ push() {
 
     case $1 in
         --all)
-            log_debug "Pushing all the packages"
+            log_debug "Pushing all packages"
             PKG_LIST=$EPM_PKG_PATH/*
             ;;
         *)
@@ -1148,8 +1329,6 @@ push() {
     for PKG_PATH in $PKG_LIST; do
         PKG_NAME="$(basename $PKG_PATH)"
         PKG_ENV=$(push_env $1)
-        PKG_PACK_LOG_FILE="$EPM_LOG_PATH/pack_$PKG_NAME.log"
-        PKG_PUSH_LOG_FILE="$EPM_LOG_PATH/push_$PKG_NAME.log"
 
         command_start "Pushing package \"$PKG_NAME\""
 
@@ -1242,8 +1421,58 @@ list_check() {
     log_debug "Checking list command preconditions"
 }
 
-list_exec() {
+list_local_packages() {
+    PKG_PATH="$EPM_PKG_PATH"
+
+    for DIR in $PKG_PATH/*/; do
+        DIR=${DIR%*/}
+        echo ${DIR##*/}
+    done
+}
+
+list_installed_packages() {
     data_list_packages
+}
+
+list_remote_packages() {
+    EPM_PKG_SRV="$(config_get_exec $EPM_PKG_SRV_KEY)"
+    if [[ $EPM_PKG_SRV == file://* ]]; then
+        DIR=${EPM_PKG_SRV#*file://}
+        for FILE in $DIR/*.pkg; do 
+            if [[ "$FILE" == *-$ENV_NIX\.$PKG_EXT || "$FILE" == *-$ENV_ALL\.$PKG_EXT ]]; then
+                replace "$(basename $FILE)" "(.*)-($ENV_ALL|$ENV_NIX)\.$PKG_EXT" "\1"
+            fi
+        done
+    fi
+}
+
+list_exec() {
+    declare -A PACKAGES
+
+    REMOTE_PKG="$(list_remote_packages)"
+    while read -r PKG; do
+        if [[ ! -z "$PKG" ]]; then
+            PACKAGES["$PKG"]="AVAILABLE"
+        fi
+    done <<< "$REMOTE_PKG"
+
+    LOCAL_PKG="$(list_local_packages)"
+    while read -r PKG; do
+        if [[ ! -z "$PKG" ]]; then
+            PACKAGES["$PKG"]="AVAILABLE"
+        fi
+    done <<< "$LOCAL_PKG"
+
+    INSTALLED_PKG="$(list_installed_packages)"
+    while read -r PKG; do
+        if [[ ! -z "$PKG" ]]; then
+            PACKAGES["$PKG"]="INSTALLED"
+        fi
+    done <<< "$INSTALLED_PKG"
+
+    for PKG in ${!PACKAGES[@]}; do
+        printf "%s %s\n" "$PKG" "${PACKAGES["$PKG"]}"
+    done | print_table2 "Name" "Status"
 }
 
 list() {
@@ -1261,11 +1490,12 @@ version() {
 }
 
 manual_page() {
-    MANUAL_CMD=$1
+    MANUAL_CMD="$1"
     COMMAND_UPPER=${MANUAL_CMD^^}
-    MANUAL_NAME=$2
-    MANUAL_SYNOPSIS=$3
-    MANUAL_DESCRIPTION=$4
+    MANUAL_NAME="$2"
+    MANUAL_SYNOPSIS="$3"
+    MANUAL_DESCRIPTION="$4"
+    MANUAL_OPTIONS="$5"
     
     HEADER_LEFT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
     HEADER_CENTER_MSG="${PROGRAM_NAME^} Manual"
@@ -1288,22 +1518,38 @@ manual_page() {
     printf "\t%s%s%s %s\n\n\n" "$TERM_BOLD$TERM_YELLOW" "$PROGRAM_FILE $MANUAL_CMD" "$TERM_NORMAL" "$MANUAL_SYNOPSIS"
     printf "%s%s%s\n" "$TERM_BOLD$TERM_RED" "DESCRIPTION" "$TERM_NORMAL"
     printf "\t%s\n\n\n" "$MANUAL_DESCRIPTION"
+
+    if ! empty $MANUAL_OPTIONS; then
+        printf "%s%s%s\n" "$TERM_BOLD$TERM_RED" "OPTIONS" "$TERM_NORMAL"
+        printf "%b\n\n\n" "$MANUAL_OPTIONS"
+    fi
+
     printf "%s%${FOOTER_CENTER_COLS}s%${FOOTER_RIGHT_COLS}s\n" "$FOOTER_LEFT_MSG" "$FOOTER_CENTER_MSG" "$FOOTER_RIGHT_MSG"
 }
 
 help_init() {
     COMMAND="init"
     NAME="Inits ${PROGRAM_NAME}"
-    SYNOPSIS="<URL>"
-    DESCRIPTION="Initializes ${PROGRAM_NAME} store in the current directory"
+    SYNOPSIS="<url>"
+    DESCRIPTION="Initializes a ${PROGRAM_NAME} store in the current directory"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
+help_config() {
+    COMMAND="config"
+    NAME="Get and set $PROGRAM_NAME variables"
+    SYNOPSIS="[option]|<name>|<name> <value>"
+    DESCRIPTION="You can add/remove/get/set variables with this command"
+    OPTIONS=$(config_options)
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION" "$OPTIONS"
 }
 
 help_pull() {
     COMMAND="pull"
     NAME="Pulls a package from the $PROGRAM_NAME server"
-    SYNOPSIS="<PACKAGE>"
+    SYNOPSIS="<package>"
     DESCRIPTION="The package is retrieved from the $PROGRAM_NAME server only if is not already available localy in the pakage path ($EPM_PKG_PATH) or in the staging path ($EPM_STG_PATH). After obtaining the package the data is decompressed to the pakage path"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
@@ -1312,7 +1558,7 @@ help_pull() {
 help_install() {
     COMMAND="install"
     NAME="Installs a $PROGRAM_NAME package"
-    SYNOPSIS="<PACKAGE>"
+    SYNOPSIS="<package>"
     DESCRIPTION="Installs a package. This command executes a pull if the package does not exists locally. Also, if the package is already installed it is uninstalled first"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
@@ -1327,6 +1573,15 @@ help_uninstall() {
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
+help_purge() {
+    COMMAND="purge"
+    NAME="Purges a $PROGRAM_NAME package"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Purges a package, i.e. uninstalls and removes it from the local package cache. If this package has child packages they are uninstalled (but not purged). This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
+}
+
 help_pack() {
     COMMAND="pack"
     NAME="Creates a $PROGRAM_NAME package"
@@ -1337,11 +1592,21 @@ help_pack() {
 }
 
 help_push() {
-    echo "TODO"
+    COMMAND="push"
+    NAME="Pushes a $PROGRAM_NAME package to the server"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Uploads a package to a server"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_update() {
-    echo "TODO"
+    COMMAND="update"
+    NAME="Updates a $PROGRAM_NAME package or all the packages"
+    SYNOPSIS="<PACKAGE>"
+    DESCRIPTION="Checks if one or more packages are up-to-date with the current version at the server. If the computed checksum of the package directory differs from the one stored in the package server, the previous version is uninstalled, and replaced by the new version"
+    
+    manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_list() {
@@ -1364,7 +1629,7 @@ help_version() {
 
 help_help() {
     COMMAND="help"
-    NAME="Display help information about $PROGRAM_NAME"
+    NAME="Display $PROGRAM_NAME help information"
     SYNOPSIS="[COMMAND]"
     DESCRIPTION="With no COMMAND given, the synopsis of the $PROGRAM_NAME command and a list of the most commonly used ${PROGRAM_NAME^} commands are printed on the standard output"
     
@@ -1377,7 +1642,7 @@ help_invalid_command() {
 
 help_check() {
     USAGE_CMD="help"
-    USAGE_CMD_SYNOPSIS="<COMMAND>"
+    USAGE_CMD_SYNOPSIS="<command>"
     USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking help command preconditions"
@@ -1402,6 +1667,9 @@ help() {
         init)
             help_init
             ;;
+        config)
+            help_config
+            ;;
         pull)
             help_pull
             ;;
@@ -1410,6 +1678,9 @@ help() {
             ;;
         uninstall)
             help_uninstall
+            ;;
+        purge)
+            help_purge
             ;;
         pack)
             help_pack
@@ -1452,6 +1723,9 @@ case $CMD in
         ;;
     -u|uninstall)
         uninstall $2
+        ;;
+    purge)
+        purge $2
         ;;
     pack)
         pack $2
