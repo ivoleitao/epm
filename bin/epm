@@ -20,7 +20,7 @@ TERM_GRAY=$(tput setaf 7)
 ENV_ALL="all"
 ENV_NIX="nix"
 ENV_WIN="win"
-ENV=$ENV_NIX
+ENV="$ENV_NIX"
 PKG_EXT="pkg"
 YML_EXT="yml"
 TRACE_LEVEL_VALUE="1"
@@ -39,6 +39,7 @@ declare -A LOG_LEVELS=( [$TRACE_LEVEL_NAME]="$TRACE_LEVEL_VALUE" [$DEBUG_LEVEL_N
 EPM_DEFAULT_LOG_NAME=$TRACE_LEVEL_NAME
 EPM_DEFAULT_LOG_VALUE=${LOG_LEVELS[$EPM_DEFAULT_LOG_NAME]}
 EPM_ENV_FILE_NAME="env.sh"
+EPM_LIB_FILE_NAME="lib.sh"
 EPM_DAT_FILE_NAME="data.yml"
 EPM_LOG_FILE_NAME="$PROGRAM_NAME.log"
 PKG_CONFIG_SOURCE_ORIGIN="origin"
@@ -62,16 +63,17 @@ ETC_PATH="$ROOT_PATH/etc"
 VAR_PATH="$ROOT_PATH/var"
 LOG_PATH="$VAR_PATH/log"
 TMP_PATH="$ROOT_PATH/tmp"
-DB_PATH="$ROOT_PATH/db"
 APP_PATH="$ROOT_PATH/app"
 WS_PATH="$ROOT_PATH/ws"
 WWW_PATH="$ROOT_PATH/www"
 EPM_PATH="$ROOT_PATH/$EPM_DIR"
 EPM_ENV_FILE_PATH="$EPM_PATH/$EPM_ENV_FILE_NAME"
+EPM_LIB_FILE_PATH="$EPM_PATH/$EPM_LIB_FILE_NAME"
 EPM_DAT_FILE_PATH="$EPM_PATH/$EPM_DAT_FILE_NAME"
 EPM_LOG_PATH="$EPM_PATH/log"
 EPM_LOG_FILE_PATH="$EPM_LOG_PATH/$EPM_LOG_FILE_NAME"
 EPM_BIN_PATH="$EPM_PATH/bin"
+EPM_LIB_PATH="$EPM_PATH/lib"
 EPM_PKG_PATH="$EPM_PATH/pkg"
 EPM_STG_PATH="$EPM_PATH/stg"
 
@@ -83,14 +85,15 @@ ETC_PATH_KEY="ETC_PATH"
 VAR_PATH_KEY="VAR_PATH"
 LOG_PATH_KEY="LOG_PATH"
 TMP_PATH_KEY="TMP_PATH"
-DB_PATH_KEY="DB_PATH"
 APP_PATH_KEY="APP_PATH"
 WS_PATH_KEY="WS_PATH"
 WWW_PATH_KEY="WWW_PATH"
 EPM_BIN_PATH_KEY="EPM_BIN_PATH"
+EPM_LIB_PATH_KEY="EPM_LIB_PATH"
 EPM_PKG_PATH_KEY="EPM_PKG_PATH"
 EPM_STG_PATH_KEY="EPM_STG_PATH"
 EPM_PKG_SRV_KEY="EPM_PKG_SRV"
+EPM_LOG_PATH_KEY="EPM_LOG_PATH"
 
 PKG_SHA1_KEY="sha1"
 PKG_TIMESTAMP_KEY="timestamp"
@@ -175,14 +178,19 @@ file_list() {
     log_trace "Listing files in directory \"$1\""
     while read -r FILE; do
         if ! empty "$FILE"; then
-            echo $FILE
+            echo $(basename -- "$FILE")
         fi   
-    done <<< "$(ls -d -- $1/*/ 2>/dev/null)"
+    done <<< "$(ls -d -- $1/* 2>/dev/null)"
 }
 
 file_exists() {
     log_trace "Checking if file \"$1\" exists"
     test -f "$1"
+}
+
+file_empty() {
+    log_trace "Checking if file \"$1\" is empty"
+    ! test -s "$1"
 }
 
 file_create() {
@@ -193,6 +201,11 @@ file_create() {
 file_delete() {
     log_trace "Deleting file \"$1\""
     rm -f "$1"
+}
+
+file_copy() {
+    log_trace "Copying file \"$1\" to \"$2\""
+    cp "$1" "$2"
 }
 
 file_move() {
@@ -305,6 +318,28 @@ yesNo() {
     done
 }
 
+print_table1() {
+    HEADER_COL="$1"
+    COL_LEN=0
+    ROW_DATA=()
+    while read -r ROW; do
+        COL="$ROW"
+        TMP=${#COL}
+        COL_LEN=$(( TMP > COL_LEN ? TMP : COL_LEN ))
+        ROW_DATA+=("$COL")
+    done
+
+    if [ "${#ROW_DATA}" -gt "0" ]; then
+        printf "$TERM_BOLD$TERM_YELLOW%-${COL_LEN}s$TERM_NORMAL\n" "$HEADER_COL"
+        
+        for ROW in "${ROW_DATA[@]}"; do
+            COL="$ROW"
+
+            printf "%-${COL1_LEN}s\n" "$COL"
+        done
+    fi
+}
+
 print_table2() {
     HEADER_COL1="$1"
     HEADER_COL2="$2"
@@ -367,26 +402,52 @@ print_table3() {
     fi
 }
 
-command_start() {
-    printf "%s: " "$1"
+command_begin() {
+    local MSG="$1"
+    local STATUS="$2"
+    STATUS="${STATUS:-"RUNNING"}"
+    
+    printf "%s: " "$MSG"
     save_cursor
-    printf "[$TERM_BLUE""RUNNING""$TERM_NORMAL]"
+    printf "[$TERM_BLUE""$STATUS""$TERM_NORMAL]"
 }
 
-command_ok() {
+command_step() {
+    local STATUS="$1"
+
     restore_cursor
     clean_to_end_line
-    if empty $1; then
-        printf "[$TERM_GREEN""OK""$TERM_NORMAL]\n"
+    save_cursor
+    printf "[$TERM_BLUE""$STATUS""$TERM_NORMAL]"
+}
+
+download_step() {
+    command_step "DOWNLOAD"
+}
+
+running_step() {
+    command_step "RUNNING"
+}
+
+command_end() {
+    local STATUS="$1"
+    local MSG="$2"
+
+    restore_cursor
+    clean_to_end_line
+    if empty "$MSG"; then
+        printf "[$TERM_GREEN""$STATUS""$TERM_NORMAL]\n"
     else
-        printf "[$TERM_GREEN""OK""$TERM_NORMAL][%s]\n" "$1"
+        printf "[$TERM_RED""$STATUS""$TERM_NORMAL][%s]\n" "$MSG"
     fi
 }
 
+command_ok() {
+    command_end "OK"
+}
+
 command_fail() {
-    restore_cursor
-    clean_to_end_line
-    printf "[$TERM_RED""FAIL""$TERM_NORMAL][%s]\n" "$1"
+    command_end "FAIL" "$1"
     exit 1
 }
 
@@ -436,8 +497,6 @@ check() {
         exit 1
     fi
 }
-
-
 
 function parse_yaml {
     log_trace "Parsing yaml file"
@@ -699,12 +758,12 @@ data_config_remove() {
 }
 
 data_config_list() {
-    file_read "$EPM_DAT_FILE_PATH" | grep -Po "(?<=)^\w+(?=:)"
+    file_read "$EPM_DAT_FILE_PATH" | grep -Po "(?<=)^[a-zA-Z]{1}[_a-zA-Z0-9]+(?=:)"
 }
 
 data_config_get() {
     log_trace "Getting package \"$1\" info from \"$EPM_DAT_FILE_PATH\""
-    file_read "$EPM_DAT_FILE_PATH" | parse_yaml | grep -Po "$1:.*"
+    file_read "$EPM_DAT_FILE_PATH" | parse_yaml | grep -Po "^$1:.*$"
 }
 
 data_has_package() {
@@ -967,6 +1026,149 @@ config() {
     esac
 }
 
+lib_options() {
+    OPTION_ADD="\t--add\t\tadd a new library: path"
+    OPTION_REMOVE="\t--remove\tremove a library: name"
+    OPTION_LIST="\t--list\t\tlists all the libraries"
+    OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_LIST"
+
+    printf "%b\n" "$OPTIONS"
+}
+
+lib_add_check() {
+    USAGE_CMD="lib --add"
+    USAGE_CMD_SYNOPSIS="<path>"
+    USAGE_CMD_DESCRIPTION=""
+   
+    log_debug "Checking lib-add command preconditions"
+
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a path"
+    elif ! file_exists "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify an existing file"
+    fi
+}
+
+lib_add_exec() {
+    LIB_ADD_PATH="$1"
+    LIB_ADD_FILE_NAME="$(basename -- "$LIB_ADD_PATH")"
+    LIB_ADD_NAME="${LIB_ADD_FILE_NAME%.*}"
+    LIB_ADD_NEW_PATH="$EPM_LIB_PATH/${LIB_ADD_NAME}.sh"
+    LIB_ADD_BCK_PATH="${LIB_ADD_NEW_PATH}.bak"
+
+    if file_exists "$LIB_ADD_NEW_PATH"; then
+        file_move "$LIB_ADD_NEW_PATH" "$LIB_ADD_BCK_PATH"
+    fi
+
+    log_trace "Copying library from \"$LIB_ADD_PATH\" to \"$LIB_ADD_NEW_PATH\""
+    file_copy "$LIB_ADD_PATH" "$LIB_ADD_NEW_PATH"
+    file_executable "$LIB_ADD_NEW_PATH"
+
+    log_trace "Adding library path \"$LIB_ADD_NEW_PATH\" to \"$EPM_LIB_FILE_PATH\""
+    printf "source \"%s\"\n" "$LIB_ADD_NEW_PATH" >> "$EPM_LIB_FILE_PATH" 
+}
+
+lib_add() {
+    log_debug "Executing lib-add command with \"$1\""
+
+    lib_add_check "$1"
+
+    lib_add_exec "$1"
+}
+
+lib_remove_check() {
+    USAGE_CMD="lib --remove"
+    USAGE_CMD_SYNOPSIS="<name>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    log_debug "Checking lib-remove command preconditions"
+
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a library"
+    elif ! file_exists "$EPM_LIB_PATH/$1.sh"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "The library \"$1\" does not exist"
+    fi
+}
+
+lib_remove_exec() {
+    LIB_REMOVE_NAME="$1"
+    LIB_REMOVE_PATH="$EPM_LIB_PATH/$1.sh"
+
+    log_trace "Removing library from \"$LIB_REMOVE_PATH\""
+    rm -f "$LIB_REMOVE_PATH"
+
+    log_trace "Removing library path \"$LIB_REMOVE_PATH\" from \"$EPM_LIB_FILE_PATH\""
+    sed -i "\|source \"$LIB_REMOVE_PATH\"|d" "$EPM_LIB_FILE_PATH"
+}
+
+lib_remove() {
+    log_debug "Executing lib-remove command with \"$1\""
+
+    lib_remove_check "$1"
+
+    lib_remove_exec "$1"
+}
+
+lib_list_check() {
+    USAGE_CMD="list --list"
+    USAGE_CMD_SYNOPSIS=""
+    USAGE_CMD_DESCRIPTION=""
+
+    log_debug "Checking lib-list command preconditions"
+}
+
+lib_list_exec() {
+    file_list "$EPM_LIB_PATH"
+}
+
+lib_list() {
+    log_debug "Executing the lib-list command"
+
+    lib_list_check
+
+    lib_list_exec | print_table1 "Library"
+}
+
+lib_check() {
+    USAGE_CMD="lib"
+    USAGE_CMD_SYNOPSIS="<option> [path]"
+    USAGE_CMD_DESCRIPTION="\nOptions:\n$(lib_options)"
+
+    check
+
+    log_debug "Checking lib command preconditions"
+    
+    case "$1" in
+        "--add")
+            ;;
+        "--remove")
+            ;;
+        ""|"--list")
+            ;;
+        *)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid option"
+            ;;
+    esac
+}
+
+lib() {
+    log_debug "Executing the lib command with \"$1\""
+
+    lib_check "$1"
+    
+    case "$1" in
+        "--add")
+            lib_add "$2"
+            ;;
+        "--remove")
+            lib_remove "$2"
+            ;;
+        ""|"--list")
+            lib_list
+            ;;
+    esac
+}
+
 init_check() {
     USAGE_CMD="init"
     USAGE_CMD_SYNOPSIS="<repo>"
@@ -987,8 +1189,91 @@ init_check() {
     fi
 }
 
+init_env() {
+    env_add "$PROGRAM_PATH_KEY" "$PROGRAM_PATH"
+    env_add "$ROOT_PATH_KEY" "$ROOT_PATH"
+    env_add "$BIN_PATH_KEY" "$BIN_PATH"
+    env_add "$LIB_PATH_KEY" "$LIB_PATH"
+    env_add "$ETC_PATH_KEY" "$ETC_PATH"
+    env_add "$VAR_PATH_KEY" "$VAR_PATH"
+    env_add "$LOG_PATH_KEY" "$LOG_PATH"
+    env_add "$TMP_PATH_KEY" "$TMP_PATH"
+    env_add "$APP_PATH_KEY" "$APP_PATH"
+    env_add "$WS_PATH_KEY" "$WS_PATH"
+    env_add "$WWW_PATH_KEY" "$WWW_PATH"
+    env_add "$EPM_LOG_PATH_KEY" "$EPM_LOG_PATH"
+    env_add "$EPM_BIN_PATH_KEY" "$EPM_BIN_PATH"
+    env_add "$EPM_LIB_PATH_KEY" "$EPM_LIB_PATH"
+    env_add "$EPM_PKG_PATH_KEY" "$EPM_PKG_PATH"
+    env_add "$EPM_STG_PATH_KEY" "$EPM_STG_PATH"
+    env_add "$EPM_PKG_SRV_KEY" "$INIT_URL"
+}
+
+init_lib() {
+    printf "#!/usr/bin/env bash\n\n" >> "$EPM_LIB_FILE_PATH" 
+    printf "config_add() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s config --add \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "config_remove() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s config --remove \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "lib_add() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s lib --add \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "lib_remove() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s lib --remove \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "pack_begin() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\tlocal SCRIPT_LOG_PATH=\"%s/pack_%s.log\"\n\n" '$EPM_LOG_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "\texec 3>&1 4>&2 1>\"%s\" 2>&1\n" '$SCRIPT_LOG_PATH' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "pack_end() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\texec 1>&3 2>&4\n" >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "require() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s require \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "install() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s install \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "install_begin() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\tlocal SCRIPT_LOG_PATH=\"%s/install_%s.log\"\n\n" '$EPM_LOG_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s status --install-begin \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "\texec 3>&1 4>&2 1>\"%s\" 2>&1\n" '$SCRIPT_LOG_PATH' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "install_end() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\texec 1>&3 2>&4\n" >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s status --install-end \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "uninstall() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\t%s uninstall \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "uninstall_begin() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\tlocal SCRIPT_LOG_PATH=\"%s/uninstall_%s.log\"\n\n" '$EPM_LOG_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s status --uninstall-begin \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "\texec 3>&1 4>&2 1>\"%s\" 2>&1\n" '$SCRIPT_LOG_PATH' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "uninstall_end() {\n" >> "$EPM_LIB_FILE_PATH"
+    printf "\texec 1>&3 2>&4\n" >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s status --uninstall-end \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
+    printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f config_add\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f config_remove\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f lib_add\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f lib_remove\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f pack_begin\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f pack_end\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f require\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f install\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f install_begin\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f install_end\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f uninstall\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f uninstall_begin\n" >> "$EPM_LIB_FILE_PATH"
+    printf "export -f uninstall_end\n" >> "$EPM_LIB_FILE_PATH"
+}
+
 init_exec() {
-    INIT_URL=$1
+    INIT_URL="$1"
 
     if dir_exists "$EPM_PATH"; then
         if file_exists "$EPM_LOG_FILE_PATH"; then
@@ -1001,8 +1286,16 @@ init_exec() {
             file_truncate "$EPM_ENV_FILE_PATH"
         else
             file_create "$EPM_ENV_FILE_PATH"
+            file_executable "$EPM_ENV_FILE_PATH"    
         fi
-    
+
+        if file_exists "$EPM_LIB_FILE_PATH"; then
+            file_truncate "$EPM_LIB_FILE_PATH"
+        else
+            file_create "$EPM_LIB_FILE_PATH"
+            file_executable "$EPM_LIB_FILE_PATH"    
+        fi
+
         if file_exists "$EPM_DAT_FILE_PATH"; then
             file_truncate "$EPM_DAT_FILE_PATH"
         else
@@ -1010,7 +1303,12 @@ init_exec() {
         fi
     else
         dir_create "$EPM_PATH"
+        dir_create "$EPM_LIB_PATH"
         dir_create "$EPM_LOG_PATH"
+        file_create "$EPM_ENV_FILE_PATH"
+        file_executable "$EPM_ENV_FILE_PATH"    
+        file_create "$EPM_LIB_FILE_PATH"
+        file_executable "$EPM_LIB_FILE_PATH"    
         file_create "$EPM_LOG_FILE_PATH"
         file_create "$EPM_DAT_FILE_PATH"
     fi
@@ -1022,40 +1320,28 @@ init_exec() {
     ! dir_exists "$LOG_PATH" && dir_create "$LOG_PATH"
     ! dir_exists "$EPM_LOG_PATH" && dir_create "$EPM_LOG_PATH"
     ! dir_exists "$TMP_PATH" && dir_create "$TMP_PATH"
-    ! dir_exists "$DB_PATH" && dir_create "$DB_PATH"
     ! dir_exists "$APP_PATH" && dir_create "$APP_PATH"
     ! dir_exists "$WS_PATH" && dir_create "$WS_PATH"
     ! dir_exists "$WWW_PATH" && dir_create "$WWW_PATH"
-    ! dir_exists "$EPM_BIN_PATH" && dir_create $EPM_BIN_PATH
+    ! dir_exists "$EPM_BIN_PATH" && dir_create "$EPM_BIN_PATH"
+    ! dir_exists "$EPM_LIB_PATH" && dir_create "$EPM_LIB_PATH"
     ! dir_exists "$EPM_PKG_PATH" && dir_create "$EPM_PKG_PATH"
     ! dir_exists "$EPM_STG_PATH" && dir_create "$EPM_STG_PATH"
 
-    env_add "$PROGRAM_PATH_KEY" "$PROGRAM_PATH"
-    env_add "$ROOT_PATH_KEY" "$ROOT_PATH"
-    env_add "$BIN_PATH_KEY" "$BIN_PATH"
-    env_add "$LIB_PATH_KEY" "$LIB_PATH"
-    env_add "$ETC_PATH_KEY" "$ETC_PATH"
-    env_add "$VAR_PATH_KEY" "$VAR_PATH"
-    env_add "$LOG_PATH_KEY" "$LOG_PATH"
-    env_add "$TMP_PATH_KEY" "$TMP_PATH"
-    env_add "$DB_PATH_KEY" "$DB_PATH"
-    env_add "$APP_PATH_KEY" "$APP_PATH"
-    env_add "$WS_PATH_KEY" "$WS_PATH"
-    env_add "$WWW_PATH_KEY" "$WWW_PATH"
-    env_add "$EPM_BIN_PATH_KEY" "$EPM_BIN_PATH"
-    env_add "$EPM_PKG_PATH_KEY" "$EPM_PKG_PATH"
-    env_add "$EPM_STG_PATH_KEY" "$EPM_STG_PATH"
-    env_add "$EPM_PKG_SRV_KEY" "$INIT_URL"
+    init_env
+    init_lib
+}
 
-    file_executable "$EPM_ENV_FILE_PATH"    
+init_begin() {
+    command_begin "Initializing $PROGRAM_NAME"
 }
 
 init() {
-    log_debug "Executing the init command with \"$INIT_URL\""
+    log_debug "Executing the init command with \"$1\""
 
     init_check "$1"
 
-    command_start "Initializing $PROGRAM_NAME"
+    init_begin
 
     init_exec "$1"
 
@@ -1128,11 +1414,13 @@ pull_exec() {
             fi
             
             dir_create "$PKG_STG_PATH"
+            download_step
             if ! url_file_download "$YML_STG_FILE_PATH" "$YML_URL" || ! url_file_download "$PKG_STG_FILE_PATH" "$PKG_URL"; then
                 file_delete "$YML_STG_FILE_PATH"
                 file_delete "$PKG_STG_FILE_PATH"
                 command_fail "Unable to download package \"$PULL_PACKAGE\" to \"$PKG_STG_PATH\""
             fi
+            running_step
         fi
 
         dir_create "$PKG_ENV_PATH"
@@ -1142,8 +1430,12 @@ pull_exec() {
     fi
 }
 
+pull_begin() {
+    command_begin "Pulling package $1"
+}
+
 pull_package_exec() {
-    command_start "Pulling package $1"
+    pull_begin "$1"
 
     pull_exec "$1"
 
@@ -1178,27 +1470,25 @@ uninstall_exec() {
         command_fail "Uninstall script was not found in $PKG_PATH"
     fi
 
-    PKG_UNINSTALL_SH_PATH=$PKG_ENV_PATH/$PKG_UNINSTALL_FILE_NAME
-    PKG_LOG_FILE="$EPM_LOG_PATH/uninstall_$UNINSTALL_PACKAGE.log"
+    PKG_TYPE="$(pkg_config_get_type "$UNINSTALL_PACKAGE")"
+    PKG_UNINSTALL_SH_PATH="$PKG_ENV_PATH/$PKG_UNINSTALL_FILE_NAME"
 
     log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_ENV_FILE_PATH\""
-    source $EPM_ENV_FILE_PATH 
+    source "$EPM_ENV_FILE_PATH"
+    source "$EPM_LIB_FILE_PATH"
 
-    UNINSTALL_PACKAGE_TYPE=${PACKAGE_TYPE:-"$PKG_TYPE_SINGLE"}
-    case $UNINSTALL_PACKAGE_TYPE in
-        $PKG_TYPE_SINGLE)
+    case "$PKG_TYPE" in
+        "$PKG_TYPE_SINGLE")
             log_debug "Executing single uninstall script"
-            if $PKG_UNINSTALL_SH_PATH &> "$PKG_LOG_FILE"; then
+            if $PKG_UNINSTALL_SH_PATH; then
                 data_config_remove "$UNINSTALL_PACKAGE"
             else
-                command_fail "$PKG_LOG_FILE"
+                command_fail
             fi
             ;;
-        $PKG_TYPE_BUNDLE)
+        "$PKG_TYPE_BUNDLE")
             log_debug "Executing bundle uninstall script"
-            printf "\n"
             $PKG_UNINSTALL_SH_PATH
-            data_config_remove "$UNINSTALL_PACKAGE"
             ;;
         *)
             command_fail "Invalid package type $INSTALL_PACKAGE_TYPE"
@@ -1253,12 +1543,16 @@ uninstall_check() {
     fi
 }
 
-uninstall_package_exec() {
-    command_start "Uninstalling package $1"
+uninstall_begin() {
+    command_begin "Uninstalling package $1"
+}
 
-    uninstall_exec "$1"
-
+uninstall_end() {
     command_ok
+}
+
+uninstall_package_exec() {
+    uninstall_exec "$1"
 }
 
 uninstall_package() {
@@ -1304,8 +1598,12 @@ purge_exec() {
     fi
 }
 
+purge_begin() {
+    command_begin "Purging package $1"
+}
+
 purge_package_exec() {
-    command_start "Purging package $1"
+    purge_begin "$1"
 
     purge_exec "$1"
 
@@ -1342,19 +1640,21 @@ install_exec() {
     else 
         command_fail "Invalid package folder $INSTALL_PACKAGE"
     fi
+    PKG_TYPE="$(pkg_config_get_type "$INSTALL_PACKAGE")"
     PKG_PARENT="$(pkg_config_get_parent "$INSTALL_PACKAGE")"
     PKG_DEPENDENCIES="$(pkg_config_get_dependencies "$INSTALL_PACKAGE")"
     PKG_INSTALL_SH_PATH="$PKG_ENV_PATH/$PKG_INSTALL_FILE_NAME"
 
     log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_ENV_FILE_PATH\""
     source "$EPM_ENV_FILE_PATH" 
+    source "$EPM_LIB_FILE_PATH"
 
-    INSTALL_PACKAGE_TYPE=${PACKAGE_TYPE:-"$PKG_TYPE_SINGLE"}
-    case $INSTALL_PACKAGE_TYPE in
-        $PKG_TYPE_SINGLE)
-            PKG_LOG_FILE="$EPM_LOG_PATH/install_$INSTALL_PACKAGE.log"
+    INSTALL_PACKAGE_TYPE="${PACKAGE_TYPE:-"$PKG_TYPE_SINGLE"}"
+    case "$PKG_TYPE" in
+        "$PKG_TYPE_SINGLE")
             log_debug "Executing single install script"
-            if $PKG_INSTALL_SH_PATH &> "$PKG_LOG_FILE"; then
+
+            if $PKG_INSTALL_SH_PATH; then
                 data_config_add "$INSTALL_PACKAGE"\
                     "$PKG_TYPE_SINGLE"\
                     "$PKG_ENV"\
@@ -1362,21 +1662,13 @@ install_exec() {
                     "$PKG_DEPENDENCIES"\
                     "$PKG_DESCRIPTION"
             else
-                command_fail "$PKG_LOG_FILE"
+                command_fail
             fi
             ;;
-        $PKG_TYPE_BUNDLE)
+        "$PKG_TYPE_BUNDLE")
             log_debug "Executing bundle install script"
-            printf "\n"
-            $PKG_INSTALL_SH_PATH
-                data_config_add "$INSTALL_PACKAGE"\
-                    "$PKG_TYPE_BUNDLE"\
-                    "$PKG_ENV"\
-                    "$PKG_PARENT"\
-                    "$PKG_DEPENDENCIES"\
-                    "$PKG_DESCRIPTION"
 
-            printf "Finished installing %s: " "$INSTALL_PACKAGE"
+            $PKG_INSTALL_SH_PATH
             ;;
         *)
             command_fail "Invalid package type $INSTALL_PACKAGE_TYPE"
@@ -1434,12 +1726,16 @@ install_check() {
     fi
 }
 
-install_package_exec() {
-    command_start "Installing package $1"
+install_begin() {
+    command_begin "Installing package $1"
+}
 
-    install_exec "$1"
-        
+install_end() {
     command_ok
+}
+
+install_package_exec() {
+    install_exec "$1"
 }
 
 install_package() {
@@ -1461,6 +1757,33 @@ install() {
     fi
 }
 
+require_check() {
+    USAGE_CMD="require"
+    USAGE_CMD_SYNOPSIS="<package>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking require command preconditions"
+
+    if empty "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package to install"
+    elif ! is_package "$1"; then
+        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
+    fi
+}
+
+require() {
+    log_debug "Executing the require command with \"$1\""
+
+    require_check "$1"
+
+    if ! data_has_package "$1"; then
+        log_debug "Package \"$1\" is not installed proceding with the installation"
+        install_package "$1"
+    fi
+}
+
 pack_build() {
     PKG="$1"
     PKG_ENV="$(pkg_env "$PKG")"
@@ -1474,9 +1797,8 @@ pack_build() {
 
     if file_exists "$PKG_PACK_FILE_PATH"; then
         log_debug "Executing package \"$PKG\" custom pack script"
-        PKG_LOG_FILE="$EPM_LOG_PATH/pack_$PKG.log"
-        if ! $PKG_PACK_FILE_PATH &> "$PKG_LOG_FILE"; then
-            command_fail "$PKG_LOG_FILE"
+        if ! "$PKG_PACK_FILE_PATH"; then
+            command_fail
         fi
     fi
     
@@ -1510,6 +1832,7 @@ pack_exec() {
 
     log_debug "Loading $PROGRAM_NAME configuration located at \"$EPM_ENV_FILE_PATH\""
     source "$EPM_ENV_FILE_PATH"
+    source "$EPM_LIB_FILE_PATH"
     pack_build "$PACK_PKG"
 }
 
@@ -1534,12 +1857,16 @@ pack_check() {
     fi
 }
 
+pack_begin() {
+    command_begin "Packing package $1"
+}
+
 pack() {
     log_debug "Executing the pack command with \"$1\""
 
     pack_check "$1"
     
-    command_start "Packing package $1"
+    pack_begin "$1"
     
     pack_exec "$1"
     
@@ -1595,12 +1922,16 @@ push_check() {
     esac
 }
 
+push_begin() {
+    command_begin "Pushing package $1"
+}
+
 push() {
     log_debug "executing the push command with \"$1\""
 
-    push_check $1
+    push_check "$1"
 
-    case $1 in
+    case "$1" in
         --all)
             log_debug "Pushing all packages"
             PKG_LIST=$EPM_PKG_PATH/*
@@ -1614,7 +1945,7 @@ push() {
     for PKG_PATH in $PKG_LIST; do
         PKG_NAME="$(basename $PKG_PATH)"
 
-        command_start "Pushing package \"$PKG_NAME\""
+        push_begin "$PKG_NAME"
 
         pack_exec "$PKG_NAME"
         push_exec "$PKG_NAME"
@@ -1760,14 +2091,77 @@ update() {
     esac
 }
 
+status_check() {
+    USAGE_CMD="status"
+    USAGE_CMD_SYNOPSIS="<code>"
+    USAGE_CMD_DESCRIPTION=""
+    
+    check
+
+    log_debug "Checking status command preconditions"
+
+    case "$1" in
+        "-ib"|"-ub"|"--install-begin"|"--uninstall-begin")
+            if empty "$2"; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the package"
+            elif ! is_package "$2"; then
+                command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$2\""
+            fi
+            ;;
+        "-ie"|"-ue"|"--install-end"|"--uninstall-end")
+            ;;
+        -*)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid status message"
+            ;;
+        *)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify the status message"
+            ;;
+    esac
+}
+
+status() {
+    log_debug "Executing the status command with \"$1\""
+
+    status_check "$1" "$2"
+
+    case "$1" in
+        "-ib"|"--install-begin")
+            install_begin "$2"
+            ;;
+        "-ie"|"--install-end")
+            install_end
+            ;;
+        "-ub"|"--uninstall-begin")
+            uninstall_begin "$2"
+            ;;
+        "-ue"|"--uninstall-end")
+            uninstall_end
+            ;;
+    esac
+}
+
 list_check() {
     USAGE_CMD="list"
-    USAGE_CMD_SYNOPSIS=""
+    USAGE_CMD_SYNOPSIS="[--all]|[-l|--local]|[-r|--remote]|[-i|--installed]"
     USAGE_CMD_DESCRIPTION=""
     
     check
 
     log_debug "Checking list command preconditions"
+
+    case "$1" in
+        "--all"|"")
+            ;;
+        "-l"|"--local")
+            ;;
+        "-r"|"--remote")
+            ;;
+        "-i"|"--installed")
+            ;;
+        *)
+            command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid option: $1"
+            ;;
+    esac
 }
 
 list_local_packages() {
@@ -1793,28 +2187,36 @@ list_remote_packages() {
 }
 
 list_exec() {
+    MODE="$1"
+    MODE="${MODE:-"--all"}"
     declare -A PACKAGES
 
-    REMOTE_PKG="$(list_remote_packages)"
-    while read -r PKG; do
-        if ! empty "$PKG"; then
-            PACKAGES["$PKG"]="AVAILABLE"
-        fi
-    done <<< "$REMOTE_PKG"
+    if [ "$MODE" = "--all" ] || [ "$MODE" = "-r" ] || [ "$MODE" = "--remote" ]; then 
+        REMOTE_PKG="$(list_remote_packages)"
+        while read -r PKG; do
+            if ! empty "$PKG"; then
+                PACKAGES["$PKG"]="REMOTE"
+            fi
+        done <<< "$REMOTE_PKG"
+    fi
 
-    LOCAL_PKG="$(list_local_packages)"
-    while read -r PKG; do
-        if ! empty "$PKG"; then
-            PACKAGES["$PKG"]="AVAILABLE"
-        fi
-    done <<< "$LOCAL_PKG"
+    if [ "$MODE" = "--all" ] || [ "$MODE" = "-l" ] || [ "$MODE" = "--local" ]; then
+        LOCAL_PKG="$(list_local_packages)"
+        while read -r PKG; do
+            if ! empty "$PKG"; then
+                PACKAGES["$PKG"]="LOCAL"
+            fi
+        done <<< "$LOCAL_PKG"
+    fi
 
-    INSTALLED_PKG="$(list_installed_packages)"
-    while read -r PKG; do
-        if ! empty "$PKG"; then
-            PACKAGES["$PKG"]="INSTALLED"
-        fi
-    done <<< "$INSTALLED_PKG"
+    if [ "$MODE" = "--all" ] || [ "$MODE" = "-i" ] || [ "$MODE" = "--installed" ]; then 
+        INSTALLED_PKG="$(list_installed_packages)"
+        while read -r PKG; do
+            if ! empty "$PKG"; then
+                PACKAGES["$PKG"]="INSTALLED"
+            fi
+        done <<< "$INSTALLED_PKG"
+    fi
 
     for PKG in ${!PACKAGES[@]}; do
         printf "%s %s\n" "$PKG" "${PACKAGES["$PKG"]}"
@@ -1824,9 +2226,9 @@ list_exec() {
 list() {
     log_debug "Executing the list command"
 
-    list_check
+    list_check "$1"
 
-    list_exec
+    list_exec "$1"
 }
 
 version() {
@@ -2051,43 +2453,52 @@ error_invalid_command() {
     exit 1
 }
 
-CMD=$1
-case $CMD in
+CMD="$1"
+case "$CMD" in
     config)
-        config $2 $3 $4
+        config "$2" "$3" "$4"
+        ;;
+    lib)
+        lib "$2" "$3"
         ;;
     init)
-        init $2
+        init "$2"
         ;;
     pull)
-        pull $2
+        pull "$2"
         ;;
     -i|install)
-        install $2
+        install "$2"
+        ;;
+    -r|require)
+        require "$2"
         ;;
     -u|uninstall)
-        uninstall $2
+        uninstall "$2"
         ;;
     purge)
-        purge $2
+        purge "$2"
         ;;
     pack)
-        pack $2
+        pack "$2"
         ;;
     push)
-        push $2
+        push "$2"
         ;;
     update)
-        update $2
+        update "$2"
         ;;
-    list)
-        list
+    status)
+        status "$2" "$3"
+        ;;
+    -l|list)
+        list "$2"
         ;;
     --version|version)
         version    
         ;;
     --help|help)
-        help $2
+        help "$2"
         ;;
     "")
         usage
