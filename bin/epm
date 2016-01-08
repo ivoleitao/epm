@@ -105,6 +105,8 @@ EPM_LIB_PATH_KEY="EPM_LIB_PATH"
 EPM_PKG_PATH_KEY="EPM_PKG_PATH"
 EPM_STG_PATH_KEY="EPM_STG_PATH"
 EPM_PKG_SRV_KEY="EPM_PKG_SRV"
+EPM_PKG_SRV_USER_KEY="EPM_PKG_SRV_USER"
+EPM_PKG_SRV_PASSWORD_KEY="EPM_PKG_SRV_PASSWORD"
 EPM_LOG_PATH_KEY="EPM_LOG_PATH"
 
 PKG_SHA1_KEY="sha1"
@@ -302,23 +304,131 @@ url_valid() {
     [[ $1 =~ $URL_REGEX ]]
 }
 
+epm_auth() {
+    local USER="$(var_get $EPM_PKG_SRV_USER_KEY)"
+    local PASSWORD="$(var_get $EPM_PKG_SRV_PASSWORD_KEY)"
+    local AUTH=""
+
+    if [ ! -z "$USER" ] && [ ! -z "$PASSWORD" ]; then 
+        AUTH="${USER}:${PASSWORD}"
+    fi
+
+    echo "$AUTH"
+}
+
+epm_path() {
+    local EPM_FILE="${1:-}"
+
+    local EPM_PATH="$(var_get "$EPM_PKG_SRV_KEY")"
+    if [ ! -z "$EPM_FILE" ]; then
+        EPM_PATH="$EPM_PATH/$EPM_FILE"
+    fi
+
+    echo "$EPM_PATH"
+}
+
 url_file_exists() {
-    log_trace "Checking if file \"$1\" exists"
-    curl --output /dev/null --silent --head --fail "$1"
+    local URL="$1"
+    local AUTH="${2:-}"
+
+    local AUTH_OPTION=""
+    if [ ! -z "$AUTH" ]; then 
+        AUTH_OPTION="--digest --user $AUTH"
+        log_trace "Setting authentication to \"$AUTH_OPTION\""
+    fi
+    
+    log_trace "Checking if file \"$URL\" exists"
+    curl --output /dev/null --silent $AUTH_OPTION --head --fail "$URL"
+}
+
+epm_file_exists() {
+    local EPM_FILE="$1"
+
+    local EPM_FILE_PATH="$(epm_path "$EPM_FILE")"
+    local EPM_PKG_SRV_AUTH="$(epm_auth)"
+
+    url_file_exists "$EPM_FILE_PATH" "$EPM_PKG_SRV_AUTH"
 }
 
 url_file_download() {
-    log_trace "Downloading file \"$1\""
-    if [ "$#" -eq 2 ]; then
-        curl --silent --fail -o "$1" "$2"
+    local URL="$1"
+    local AUTH="$2"
+    local TARGET_FILE_PATH="${3:-}"
+
+    local AUTH_OPTION=""
+    if [ ! -z "$AUTH" ]; then 
+        log_trace "Setting authentication to \"$AUTH_OPTION\""
+        AUTH_OPTION="--digest --user $AUTH"
+    fi
+
+    if [ ! -z "$TARGET_FILE_PATH" ]; then
+        log_trace "Downloading file \"$URL\" to \"$TARGET_FILE_PATH\""
+        curl --silent --fail -o "$URL" "$TARGET_FILE_PATH"
     else
-        curl --silent --fail "$1"
+        log_trace "Downloading file \"$URL\""
+        curl --silent --fail "$URL"
     fi
 }
 
+epm_file_download() {
+    local EPM_FILE="$1"
+    local TARGET_FILE_PATH="${2:-}"
+
+    local EPM_FILE_PATH="$(epm_path "$EPM_FILE")"
+    local EPM_PKG_SRV_AUTH="$(epm_auth)"
+
+    url_file_download "$EPM_FILE_PATH" "$EPM_PKG_SRV_AUTH" "$TARGET_FILE_PATH"
+}
+
+dav_file_list() {
+    local URL="$1"
+    local AUTH="$2"
+    local FILTER="${3:-}"
+
+    local REQUEST="PROPFIND"
+    local DEPTH="Depth: 1"
+    local DATA="<a:propfind xmlns:a='DAV:'><a:prop><a:resourcetype/></a:prop></a:propfind>"
+
+    local AUTH_OPTION=""
+    if [ ! -z "$AUTH" ]; then 
+        log_trace "Setting authentication to \"$AUTH_OPTION\""
+        AUTH_OPTION="--digest --user $AUTH"
+    fi
+
+    log_trace "Listing files in \"$1\""
+
+    curl --silent $AUTH_OPTION --request "$REQUEST" -H "$DEPTH" --data "$DATA" "$URL/" | grep -Po "(?<=href>).*(?=$FILTER<)"
+}
+
+epm_file_list() {
+    local EPM_PKG_SRV="$(epm_path)"
+    local EPM_PKG_SRV_AUTH="$(epm_auth)"
+
+    dav_file_list "$EPM_PKG_SRV" "$EPM_PKG_SRV_AUTH" "-($OS_ALL|$OS_NIX)\.$PKG_EXT"
+}
+
 url_file_upload() {
-    log_trace "Uploading file \"$1\""
-    curl --fail --silent -T "$1" "$2"
+    local FILE_PATH="$1"
+    local URL="$2"
+    local AUTH="$3"
+
+    local AUTH_OPTION=""
+    if [ ! -z "$AUTH" ]; then 
+        log_trace "Setting authentication to \"$AUTH\""
+        AUTH_OPTION="--digest --user $AUTH"
+    fi
+
+    log_trace "Uploading file \"$FILE_PATH\" to \"$URL\""
+    curl --output /dev/null --fail --silent $AUTH_OPTION -T "$FILE_PATH" "$URL/"
+
+}
+
+epm_file_upload() {
+    local LOCAL_FILE_PATH="$1"
+    local EPM_PKG_SRV="$(epm_path)"
+    local EPM_PKG_SRV_AUTH="$(epm_auth)"
+
+    url_file_upload "$LOCAL_FILE_PATH" "$EPM_PKG_SRV" "$EPM_PKG_SRV_AUTH"
 }
 
 archive_create() {
@@ -347,6 +457,33 @@ yesNo() {
                 ;;
         esac
     done
+}
+
+read_secret() {
+    local SECRET=""
+
+    log_trace "Reading secret"
+
+    stty -echo
+    read SECRET
+    stty echo
+
+    echo $SECRET    
+}
+
+prompt_secret() {
+    local PROMPT="$1"
+
+    local SECRET=""
+    while : ; do
+        SECRET="$(read_secret)"
+        newline 
+        [ -z "$SECRET" ] || break
+    done
+} 
+
+newline() {
+    printf "\n"
 }
 
 print_table1() {
@@ -454,6 +591,10 @@ command_step() {
 
 download_step() {
     command_step "DOWNLOAD"
+}
+
+upload_step() {
+    command_step "UPLOAD"
 }
 
 running_step() {
@@ -675,22 +816,20 @@ pkg_metadata_local_get() {
 }
 
 pkg_metadata_remote_get() {
-    PKG="$1"
+    local PKG="$1"
 
-    EPM_PKG_SRV="$(var_get $EPM_PKG_SRV_KEY)"
-    YML_FILE_ALL="$PKG-$OS_ALL.$YML_EXT"
-    YML_FILE_NIX="$PKG-$OS_NIX.$YML_EXT"
-    YML_SRV_ALL="$EPM_PKG_SRV/$YML_FILE_ALL"
-    YML_SRV_NIX="$EPM_PKG_SRV/$YML_FILE_NIX"
-    if url_file_exists "$YML_SRV_ALL"; then
+    local YML_FILE_ALL="$PKG-$OS_ALL.$YML_EXT"
+    local YML_FILE_NIX="$PKG-$OS_NIX.$YML_EXT"
+    local YML_FILE=""
+    if epm_file_exists "$YML_FILE_ALL"; then
         log_debug "Package for all exists in the server"
-        YML_URL="$YML_SRV_ALL"
-    elif url_file_exists "$YML_SRV_NIX"; then
+        YML_FILE="$YML_FILE_ALL"
+    elif epm_file_exists "$YML_FILE_NIX"; then
         log_debug "Package for nix exists in the server"
-        YML_URL="$YML_SRV_NIX"
+        YML_FILE="$YML_FILE_NIX"
     fi
-    if ! empty "$YML_URL"; then
-         url_file_download "$YML_URL" | parse_yaml
+    if ! empty "$YML_FILE"; then
+         epm_file_download "$YML_FILE" | parse_yaml
     fi
 }
 
@@ -987,20 +1126,20 @@ data_pkg_get_dependents() {
 }
 
 env_options() {
-    OPTION_ADD="\t--add\t\tadd a new variable: name value"
-    OPTION_REMOVE="\t--remove\tremove a variable: name"
-    OPTION_GET="\t--get\t\tget value: name"
-    OPTION_SET="\t--set\t\tset value: name value"
-    OPTION_LIST="\t--list\t\tlists all the variables"
-    OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_GET\n$OPTION_SET\n$OPTION_LIST"
+    local OPTION_ADD="\t--add\t\tadd a new variable: name value"
+    local OPTION_REMOVE="\t--remove\tremove a variable: name"
+    local OPTION_GET="\t--get\t\tget value: name"
+    local OPTION_SET="\t--set\t\tset value: name value"
+    local OPTION_LIST="\t--list\t\tlists all the variables"
+    local OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_GET\n$OPTION_SET\n$OPTION_LIST"
 
     printf "%b\n" "$OPTIONS"
 }
 
 env_add_check() {
-    USAGE_CMD="env --add"
-    USAGE_CMD_SYNOPSIS="<name> <value>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env --add"
+    local USAGE_CMD_SYNOPSIS="<name> <value>"
+    local USAGE_CMD_DESCRIPTION=""
    
     log_debug "Checking env-add command preconditions"
 
@@ -1025,9 +1164,9 @@ env_add() {
 }
 
 env_remove_check() {
-    USAGE_CMD="env --remove"
-    USAGE_CMD_SYNOPSIS="<name>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env --remove"
+    local USAGE_CMD_SYNOPSIS="<name>"
+    local USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking env-remove command preconditions"
 
@@ -1049,9 +1188,9 @@ env_remove() {
 }
 
 env_get_check() {
-    USAGE_CMD="env --get"
-    USAGE_CMD_SYNOPSIS="<name>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env --get"
+    local USAGE_CMD_SYNOPSIS="<name>"
+    local USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking env-get command preconditions"
 
@@ -1075,9 +1214,9 @@ env_get() {
 }
 
 env_set_check() {
-    USAGE_CMD="env --set"
-    USAGE_CMD_SYNOPSIS="<name> <value>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env --set"
+    local USAGE_CMD_SYNOPSIS="<name> <value>"
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking env-set command preconditions"
    
@@ -1102,9 +1241,9 @@ env_set() {
 }
 
 env_default_check() {
-    USAGE_CMD="env"
-    USAGE_CMD_SYNOPSIS="<name> [value]"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env"
+    local USAGE_CMD_SYNOPSIS="<name> [value]"
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking env-default command preconditions"
     
@@ -1131,9 +1270,9 @@ env_default() {
 }
 
 env_list_check() {
-    USAGE_CMD="env --list"
-    USAGE_CMD_SYNOPSIS=""
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="env --list"
+    local USAGE_CMD_SYNOPSIS=""
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking env-list command preconditions"
 }
@@ -1147,9 +1286,9 @@ env_list() {
 }
 
 env_check() {
-    USAGE_CMD="env"
-    USAGE_CMD_SYNOPSIS="[name] <value> | [option]"
-    USAGE_CMD_DESCRIPTION="\nOptions:\n$(env_options)"
+    local USAGE_CMD="env"
+    local USAGE_CMD_SYNOPSIS="[name] <value> | [option]"
+    local USAGE_CMD_DESCRIPTION="\nOptions:\n$(env_options)"
 
     check
 
@@ -1197,9 +1336,9 @@ lib_options() {
 }
 
 lib_add_check() {
-    USAGE_CMD="lib --add"
-    USAGE_CMD_SYNOPSIS="<path>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="lib --add"
+    local USAGE_CMD_SYNOPSIS="<path>"
+    local USAGE_CMD_DESCRIPTION=""
    
     log_debug "Checking lib-add command preconditions"
 
@@ -1238,9 +1377,9 @@ lib_add() {
 }
 
 lib_remove_check() {
-    USAGE_CMD="lib --remove"
-    USAGE_CMD_SYNOPSIS="<name>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="lib --remove"
+    local USAGE_CMD_SYNOPSIS="<name>"
+    local USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking lib-remove command preconditions"
 
@@ -1271,9 +1410,9 @@ lib_remove() {
 }
 
 lib_list_check() {
-    USAGE_CMD="list --list"
-    USAGE_CMD_SYNOPSIS=""
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="list --list"
+    local USAGE_CMD_SYNOPSIS=""
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking lib-list command preconditions"
 }
@@ -1293,9 +1432,9 @@ lib_list() {
 }
 
 lib_check() {
-    USAGE_CMD="lib"
-    USAGE_CMD_SYNOPSIS="<option> [path]"
-    USAGE_CMD_DESCRIPTION="\nOptions:\n$(lib_options)"
+    local USAGE_CMD="lib"
+    local USAGE_CMD_SYNOPSIS="<option> [path]"
+    local USAGE_CMD_DESCRIPTION="\nOptions:\n$(lib_options)"
 
     check
 
@@ -1333,9 +1472,9 @@ lib() {
 }
 
 init_check() {
-    USAGE_CMD="init"
-    USAGE_CMD_SYNOPSIS="<repo>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="init"
+    local USAGE_CMD_SYNOPSIS="<repo>"
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking init command preconditions"
 
@@ -1353,6 +1492,10 @@ init_check() {
 }
 
 init_env() {
+    local EPM_PKG_SRV="$1"
+    local EPM_PKG_SRV_USER="$2"
+    local EPM_PKG_SRV_PASSWORD="$3"
+
     var_add "$PROGRAM_PATH_KEY" "$PROGRAM_PATH"
     var_add "$ROOT_PATH_KEY" "$ROOT_PATH"
     var_add "$BIN_PATH_KEY" "$BIN_PATH"
@@ -1369,7 +1512,11 @@ init_env() {
     var_add "$EPM_LIB_PATH_KEY" "$EPM_LIB_PATH"
     var_add "$EPM_PKG_PATH_KEY" "$EPM_PKG_PATH"
     var_add "$EPM_STG_PATH_KEY" "$EPM_STG_PATH"
-    var_add "$EPM_PKG_SRV_KEY" "$INIT_URL"
+    var_add "$EPM_PKG_SRV_KEY" "$EPM_PKG_SRV"
+    if [ ! -z "$EPM_PKG_SRV_USER" ] || [ ! -z "$EPM_PKG_SRV_PASSWORD" ]; then
+        var_add "$EPM_PKG_SRV_USER_KEY" "$EPM_PKG_SRV_USER"
+        var_add "$EPM_PKG_SRV_PASSWORD_KEY" "$EPM_PKG_SRV_PASSWORD"
+    fi 
     var_add "$EPM_LOG_PATH_KEY" "$EPM_LOG_PATH"
 }
 
@@ -1388,10 +1535,10 @@ init_lib() {
     printf "\t%s lib --remove \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
     printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
     printf "metadata_get() {\n" >> "$EPM_LIB_FILE_PATH"
-    printf "\t%s metadata \"%s\" --get \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' '$3' >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s metadata \"%s\" --get \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' '${3:-}' >> "$EPM_LIB_FILE_PATH" 
     printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
     printf "config_get() {\n" >> "$EPM_LIB_FILE_PATH"
-    printf "\t%s config \"%s\" --get \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' '$3' >> "$EPM_LIB_FILE_PATH" 
+    printf "\t%s config \"%s\" --get \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' '${3:-}' >> "$EPM_LIB_FILE_PATH" 
     printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
     printf "pack_begin() {\n" >> "$EPM_LIB_FILE_PATH"
     printf "\tlocal SCRIPT_LOG_PATH=\"%s/pack_%s.log\"\n\n" '$EPM_LOG_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
@@ -1445,7 +1592,9 @@ init_lib() {
 }
 
 init_exec() {
-    INIT_URL="$1"
+    local INIT_URL="$1"
+    local INIT_USER="$2"
+    local INIT_PASSWORD="$3"
 
     if dir_exists "$EPM_PATH"; then
         if file_exists "$EPM_LOG_FILE_PATH"; then
@@ -1501,7 +1650,7 @@ init_exec() {
     ! dir_exists "$EPM_PKG_PATH" && dir_create "$EPM_PKG_PATH"
     ! dir_exists "$EPM_STG_PATH" && dir_create "$EPM_STG_PATH"
 
-    init_env
+    init_env "$INIT_URL" "$INIT_USER" "$INIT_PASSWORD"
     init_lib
 }
 
@@ -1510,13 +1659,26 @@ init_begin() {
 }
 
 init() {
-    log_debug "Executing the init command with \"$1\""
+    local INIT_URL="$1"
+    local INIT_USER="$2"
+    local INIT_PASSWORD="$3"
 
-    init_check "$1"
+    log_debug "Executing the init command with \"$INIT_URL\", \"$INIT_USER\", and \"$INIT_PASSWORD\""
+
+    init_check "$INIT_URL" "$INIT_USER" "$INIT_PASSWORD"
+
+    if [ ! -z "$INIT_USER" ] && [ -z "$INIT_PASSWORD" ]; then
+        while : ; do
+            printf "Enter %s password:" "$INIT_USER"
+            INIT_PASSWORD="$(read_secret)"
+            newline 
+            [ -z "$INIT_PASSWORD" ] || break
+        done
+    fi 
 
     init_begin
 
-    init_exec "$1"
+    init_exec "$INIT_URL" "$INIT_USER" "$INIT_PASSWORD"
 
     command_ok
 }
@@ -1540,17 +1702,19 @@ pull_check() {
 pull_exec() {
     local PULL_PACKAGE="$1"
     local PKG_PATH="$EPM_PKG_PATH/$PULL_PACKAGE"
-    local EPM_PKG_SRV="$(var_get $EPM_PKG_SRV_KEY)"
-    local PKG_SRV_PATH="$EPM_PKG_SRV"
 
     if ! dir_exists "$PKG_PATH"; then
         log_debug "Package directory does not exist, now checking staging directory"
-        YML_FILE_ALL="$PULL_PACKAGE-$OS_ALL.$YML_EXT"
-        PKG_FILE_ALL="$PULL_PACKAGE-$OS_ALL.$PKG_EXT"
-        YML_FILE_NIX="$PULL_PACKAGE-$OS_NIX.$YML_EXT"
-        PKG_FILE_NIX="$PULL_PACKAGE-$OS_NIX.$PKG_EXT"
-        PKG_STG_PATH="$EPM_STG_PATH"
 
+        local YML_FILE_ALL="$PULL_PACKAGE-$OS_ALL.$YML_EXT"
+        local PKG_FILE_ALL="$PULL_PACKAGE-$OS_ALL.$PKG_EXT"
+        local YML_FILE_NIX="$PULL_PACKAGE-$OS_NIX.$YML_EXT"
+        local PKG_FILE_NIX="$PULL_PACKAGE-$OS_NIX.$PKG_EXT"
+        local PKG_STG_PATH="$EPM_STG_PATH"
+
+        local YML_STG_FILE_PATH="$PKG_STG_PATH/$YML_FILE_ALL"
+        local PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_ALL"
+        local PKG_OS_PATH="$PKG_PATH/$OS_ALL"
         if file_exists "$PKG_STG_PATH/$YML_FILE_ALL" && file_exists "$PKG_STG_PATH/$PKG_FILE_ALL"; then
             log_debug "Package for all exists in staging directory"
             YML_STG_FILE_PATH="$PKG_STG_PATH/$YML_FILE_ALL"
@@ -1563,32 +1727,30 @@ pull_exec() {
             PKG_OS_PATH="$PKG_PATH/$OS_NIX"
         else
             log_debug "Package does not exist in the staging directory, trying to fetch it from the server"
-            YML_SRV_ALL="$EPM_PKG_SRV/$YML_FILE_ALL"
-            PKG_SRV_ALL="$EPM_PKG_SRV/$PKG_FILE_ALL"
-            YML_SRV_NIX="$EPM_PKG_SRV/$YML_FILE_NIX"
-            PKG_SRV_NIX="$EPM_PKG_SRV/$PKG_FILE_NIX"
 
-            if url_file_exists "$YML_SRV_ALL" && url_file_exists "$PKG_SRV_ALL"; then
+            local YML_FILE_NAME=""
+            local PKG_FILE_NAME=""
+            if epm_file_exists "$YML_FILE_ALL" && epm_file_exists "$PKG_FILE_ALL"; then
                 log_debug "Package for all exists in the server"
                 YML_STG_FILE_PATH="$PKG_STG_PATH/$YML_FILE_ALL"
                 PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_ALL"
-                YML_URL="$YML_SRV_ALL"
-                PKG_URL="$PKG_SRV_ALL"
+                YML_FILE_NAME="$YML_FILE_ALL"
+                PKG_FILE_NAME="$PKG_FILE_ALL"
                 PKG_OS_PATH="$PKG_PATH/$OS_ALL"
-            elif url_file_exists "$YML_SRV_NIX" && url_file_exists "$PKG_SRV_NIX"; then
+            elif epm_file_exists "$YML_FILE_NIX" && epm_file_exists "$PKG_FILE_NIX"; then
                 log_debug "Package for nix exists in the server"
                 YML_STG_FILE_PATH="$PKG_STG_PATH/$YML_FILE_NIX"
                 PKG_STG_FILE_PATH="$PKG_STG_PATH/$PKG_FILE_NIX"
-                YML_URL="$YML_SRV_NIX"
-                PKG_URL="$PKG_SRV_NIX"
+                YML_FILE_NAME="$YML_FILE_NIX"
+                PKG_FILE_NAME="$PKG_FILE_NIX"
                 PKG_OS_PATH="$PKG_PATH/$OS_NIX"
             else
-                command_fail "Package \"$PULL_PACKAGE\" does not exist at \"$EPM_PKG_SRV\""
+                command_fail "Package \"$PULL_PACKAGE\" does not exist"
             fi
             
             dir_create "$PKG_STG_PATH"
             download_step
-            if ! url_file_download "$YML_STG_FILE_PATH" "$YML_URL" || ! url_file_download "$PKG_STG_FILE_PATH" "$PKG_URL"; then
+            if ! epm_file_download "$YML_FILE_NAME" "$YML_STG_FILE_PATH" || ! epm_file_download "$PKG_FILE_NAME" "$PKG_STG_FILE_PATH"; then
                 file_delete "$YML_STG_FILE_PATH"
                 file_delete "$PKG_STG_FILE_PATH"
                 command_fail "Unable to download package \"$PULL_PACKAGE\" to \"$PKG_STG_PATH\""
@@ -1675,9 +1837,9 @@ get_uninstall_dependencies() {
 }
 
 uninstall_check() {
-    USAGE_CMD="uninstall"
-    USAGE_CMD_SYNOPSIS="<package>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="uninstall"
+    local USAGE_CMD_SYNOPSIS="<package>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -1731,9 +1893,9 @@ uninstall() {
 }
 
 purge_check() {
-    USAGE_CMD="purge"
-    USAGE_CMD_SYNOPSIS="<package>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="purge"
+    local USAGE_CMD_SYNOPSIS="<package>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -1751,9 +1913,9 @@ purge_check() {
 }
 
 purge_exec() {
-    PURGE_PACKAGE="$1"
+    local PURGE_PACKAGE="$1"
 
-    PKG_PATH="$EPM_PKG_PATH/$PURGE_PACKAGE"
+    local PKG_PATH="$EPM_PKG_PATH/$PURGE_PACKAGE"
     if dir_exists "$PKG_PATH"; then
         dir_delete "$PKG_PATH" 
     fi
@@ -1850,9 +2012,9 @@ get_install_dependencies() {
 }
 
 install_check() {
-    USAGE_CMD="install"
-    USAGE_CMD_SYNOPSIS="<package>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="install"
+    local USAGE_CMD_SYNOPSIS="<package>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -1896,9 +2058,9 @@ install() {
 }
 
 require_check() {
-    USAGE_CMD="require"
-    USAGE_CMD_SYNOPSIS="<package>|<package> <target>|<package> <-p|--parent|-d|--dependecy> <target>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="require"
+    local USAGE_CMD_SYNOPSIS="<package>|<package> <target>|<package> <-p|--parent|-d|--dependecy> <target>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2040,9 +2202,9 @@ pack_exec() {
 }
 
 pack_check() {
-    USAGE_CMD="pack"
-    USAGE_CMD_SYNOPSIS="<package>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="pack"
+    local USAGE_CMD_SYNOPSIS="<package>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2077,30 +2239,36 @@ pack() {
 }
 
 push_exec() {
-    PUSH_PACKAGE="$1"
-    PUSH_OS="$(pkg_os "$PUSH_PACKAGE")"
-    PKG_PATH="$EPM_PKG_PATH/$PUSH_PACKAGE"
-    EPM_PKG_SRV="$(var_get "$EPM_PKG_SRV_KEY")"
+    local PUSH_PACKAGE="$1"
+
+    local PUSH_OS="$(pkg_os "$PUSH_PACKAGE")"
+    local PKG_PATH="$EPM_PKG_PATH/$PUSH_PACKAGE"
 
     log_debug "Pushing package \"$PUSH_PACKAGE\""
 
     YML_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$YML_EXT"
     YML_FILE_PATH="$EPM_STG_PATH/$YML_FILE_NAME"
-    YML_FILE_URL="$EPM_PKG_SRV/$YML_FILE_NAME"
     PKG_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$PKG_EXT"
     PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
-    PKG_FILE_URL="$EPM_PKG_SRV/$PKG_FILE_NAME"
 
-    url_file_upload "$YML_FILE_PATH" "$YML_FILE_URL"
-    file_move "$YML_FILE_PATH" "$PKG_PATH"
-    url_file_upload "$PKG_FILE_PATH" "$PKG_FILE_URL"
-    file_delete "$PKG_FILE_PATH"
+    upload_step
+    if epm_file_upload "$YML_FILE_PATH"; then
+        file_move "$YML_FILE_PATH" "$PKG_PATH"
+        if epm_file_upload "$PKG_FILE_PATH"; then
+            file_delete "$PKG_FILE_PATH"
+        else
+            command_fail "Failed to upload \"$PKG_FILE_PATH\""
+        fi
+    else
+        command_fail "Failed to upload \"$YML_FILE_PATH\""
+    fi
+    running_step
 }
 
 push_check() {
-    USAGE_CMD="push"
-    USAGE_CMD_SYNOPSIS="<package>|--all"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="push"
+    local USAGE_CMD_SYNOPSIS="<package>|--all"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2255,9 +2423,9 @@ update_packages() {
 }
 
 update_check() {
-    USAGE_CMD="update"
-    USAGE_CMD_SYNOPSIS="<package>|--all"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="update"
+    local USAGE_CMD_SYNOPSIS="<package>|--all"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2295,9 +2463,9 @@ update() {
 }
 
 status_check() {
-    USAGE_CMD="status"
-    USAGE_CMD_SYNOPSIS="<code>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="status"
+    local USAGE_CMD_SYNOPSIS="<code>"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2344,9 +2512,9 @@ status() {
 }
 
 list_check() {
-    USAGE_CMD="list"
-    USAGE_CMD_SYNOPSIS="[--all]|[-l|--local]|[-r|--remote]|[-i|--installed]"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="list"
+    local USAGE_CMD_SYNOPSIS="[--all]|[-l|--local]|[-r|--remote]|[-i|--installed]"
+    local USAGE_CMD_DESCRIPTION=""
     
     check
 
@@ -2368,7 +2536,7 @@ list_check() {
 }
 
 list_local_packages() {
-    PKG_PATH="$EPM_PKG_PATH"
+    local PKG_PATH="$EPM_PKG_PATH"
 
     dir_list "$PKG_PATH"
 }
@@ -2378,14 +2546,19 @@ list_installed_packages() {
 }
 
 list_remote_packages() {
-    EPM_PKG_SRV="$(var_get $EPM_PKG_SRV_KEY)"
+    local EPM_PKG_SRV="$(epm_path)"
+
     if [[ $EPM_PKG_SRV == file://* ]]; then
-        DIR=${EPM_PKG_SRV#*file://}
+        local DIR=${EPM_PKG_SRV#*file://}
         for FILE in $DIR/*.pkg; do 
             if [[ "$FILE" == *-$OS_NIX\.$PKG_EXT || "$FILE" == *-$OS_ALL\.$PKG_EXT ]]; then
                 replace "$(basename $FILE)" "(.*)-($OS_ALL|$OS_NIX)\.$PKG_EXT" "\1"
             fi
         done
+    else
+        while read -r PKG; do
+            echo "$(basename "$PKG")"    
+        done <<< "$(epm_file_list)"
     fi
 }
 
@@ -2470,9 +2643,9 @@ metadata_get() {
 }
 
 metadata_default_check() {
-    USAGE_CMD="metadata <package>"
-    USAGE_CMD_SYNOPSIS="<name> [value]"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="metadata <package>"
+    local USAGE_CMD_SYNOPSIS="<name> [value]"
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking metadata-default command preconditions"
     
@@ -2667,9 +2840,9 @@ config_set() {
 }
 
 config_default_check() {
-    USAGE_CMD="config <package>"
-    USAGE_CMD_SYNOPSIS="<name> [value]"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="config <package>"
+    local USAGE_CMD_SYNOPSIS="<name> [value]"
+    local USAGE_CMD_DESCRIPTION=""
 
     log_debug "Checking config-default command preconditions"
     
@@ -2937,9 +3110,9 @@ help_invalid_command() {
 }
 
 help_check() {
-    USAGE_CMD="help"
-    USAGE_CMD_SYNOPSIS="<command>"
-    USAGE_CMD_DESCRIPTION=""
+    local USAGE_CMD="help"
+    local USAGE_CMD_SYNOPSIS="<command>"
+    local USAGE_CMD_DESCRIPTION=""
     
     log_debug "Checking help command preconditions"
 
@@ -3016,7 +3189,7 @@ case "$CMD" in
         lib "$2" "$3"
         ;;
     init)
-        init "$2"
+        init "$2" "$3" "$4"
         ;;
     pull)
         pull "$2"
