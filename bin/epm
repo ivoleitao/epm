@@ -3,16 +3,13 @@
 # Add semantics to avoid packing without all the dependencies installed (remove work around in packages)
 # Correct problem with command_fail
 # Add best practices set command to epm
-# Add dynamic dependencies
-# Support for package configuration
 # Push only if updated
 # Add win support
 # Allow the listing of uninstalled packages 
-# Add support for listing via webdav
 # Adicionar biblioteca epm e resolver problema com jdev no wait for process
 
-VERSION_NUMBER="0.0.1"
-VERSION_DATE="04/07/2015"
+VERSION_NUMBER="0.9.0"
+VERSION_DATE="10/01/2015"
 PROGRAM_FILE="$(basename $0)"
 PROGRAM_NAME="${PROGRAM_FILE%.*}"
 PROGRAM_PATH="$(command -v $0)"
@@ -52,8 +49,8 @@ EPM_ENV_FILE_NAME="env.sh"
 EPM_LIB_FILE_NAME="lib.sh"
 EPM_DAT_FILE_NAME="data.yml"
 EPM_LOG_FILE_NAME="${PROGRAM_NAME}.log"
-PKG_METADATA_SOURCE_ORIGIN="origin"
 PKG_METADATA_SOURCE_LOCAL="local"
+PKG_METADATA_SOURCE_DATA="data"
 PKG_METADATA_SOURCE_REMOTE="remote"
 PKG_METADATA_SOURCE_AUTO="auto"
 PKG_DEPENDENTS_MODE_PARENT="parent"
@@ -63,8 +60,12 @@ PKG_PACK_FILE_NAME="pack.sh"
 PKG_METADATA_FILE_NAME="package.yml"
 PKG_INSTALL_FILE_NAME="install.sh"
 PKG_UNINSTALL_FILE_NAME="uninstall.sh"
+PKG_STATUS_LOCAL="local"
+PKG_STATUS_INSTALLED="installed"
 PKG_TYPE_SINGLE="single"
 PKG_TYPE_BUNDLE="bundle"
+PKG_RUNAS_USER="user"
+PKG_RUNAS_ADMIN="admin"
 
 ROOT_PATH="$(pwd)"
 BIN_PATH="$ROOT_PATH/bin"
@@ -104,6 +105,8 @@ EPM_BIN_PATH_KEY="EPM_BIN_PATH"
 EPM_LIB_PATH_KEY="EPM_LIB_PATH"
 EPM_PKG_PATH_KEY="EPM_PKG_PATH"
 EPM_STG_PATH_KEY="EPM_STG_PATH"
+EPM_ENV_FILE_PATH_KEY="EPM_ENV_FILE_PATH"
+EPM_LIB_FILE_PATH_KEY="EPM_LIB_FILE_PATH"
 EPM_PKG_SRV_KEY="EPM_PKG_SRV"
 EPM_PKG_SRV_USER_KEY="EPM_PKG_SRV_USER"
 EPM_PKG_SRV_PASSWORD_KEY="EPM_PKG_SRV_PASSWORD"
@@ -111,9 +114,10 @@ EPM_LOG_PATH_KEY="EPM_LOG_PATH"
 
 PKG_SHA1_KEY="sha1"
 PKG_TIMESTAMP_KEY="timestamp"
-PKG_TENANT_KEY="tenant"
-PKG_TYPE_KEY="type"
 PKG_OS_KEY="os"
+PKG_TENANT_KEY="tenant"
+PKG_STATUS_KEY="status"
+PKG_TYPE_KEY="type"
 PKG_PARENT_KEY="parent"
 PKG_DEPENDENCIES_KEY="dependencies"
 PKG_DESCRIPTION_KEY="description"
@@ -176,6 +180,7 @@ clean_to_end_line() {
 
 empty() {
     log_trace "Checking if parameter \"$1\" is empty"
+
     test -z "$1"
 }
 
@@ -186,16 +191,29 @@ trim() {
 
 replace() {
     log_trace "Replacing \"$2\" with \"$3\" in \"$1\""
+
     sed -r "s/$2/$3/g" <<< $1 
 }
 
 reverse() {
     log_trace "Reversing text \"$1\""
+
     sed -n '1!G;h;$p' <<< "$1"
+}
+
+user_name() {
+    echo "$USER"
+}
+
+user_is_root() {
+    [ "$EUID" -eq 0 ]
 }
 
 csv_contains() {
     log_trace "Checking if csv list \"$1\" has the \"$2\" element"
+
+    local VALUE
+    local VALUES
     IFS=',' read -ra VALUES <<< "$1"
     for VALUE in "${VALUES[@]}"; do
         local TVALUE="$(trim "$VALUE")"
@@ -209,6 +227,8 @@ csv_contains() {
 
 file_list() {
     log_trace "Listing files in directory \"$1\""
+
+    local FILE
     while read -r FILE; do
         if ! empty "$FILE"; then
             echo $(basename -- "$FILE")
@@ -218,41 +238,49 @@ file_list() {
 
 file_exists() {
     log_trace "Checking if file \"$1\" exists"
+
     test -f "$1"
 }
 
 file_empty() {
     log_trace "Checking if file \"$1\" is empty"
+
     ! test -s "$1"
 }
 
 file_create() {
     log_trace "Creating file \"$1\""
+
     touch "$1"
 }
 
 file_delete() {
     log_trace "Deleting file \"$1\""
+
     rm -f "$1"
 }
 
 file_copy() {
     log_trace "Copying file \"$1\" to \"$2\""
+
     cp "$1" "$2"
 }
 
 file_move() {
     log_trace "Moving file \"$1\" to \"$2\""
+
     mv "$1" "$2"
 }
 
 file_executable() {
     log_trace "Making file \"$1\" executable"
+
     chmod +x "$1"
 }
 
 file_truncate() {
     log_trace "Truncating file \"$1\""
+
     truncate -s 0 "$1"
 }
 
@@ -270,6 +298,8 @@ file_read() {
 
 dir_list() {
     log_trace "Listing folders in directory \"$1\""
+    
+    local DIR
     while read -r DIR; do
         if ! empty "$DIR"; then
             DIR=${DIR%*/}
@@ -280,27 +310,32 @@ dir_list() {
 
 dir_exists() {
     log_trace "Checking if directory \"$1\" exists"
+
     test -d "$1"
 }
 
 dir_create() {
     log_trace "Creating directory \"$1\""
+
     mkdir -p "$1"
 }
 
 dir_delete() {
     log_trace "Deleting directory \"$1\""
+
     rm -Rf "$1"
 }
 
 dir_checksum() {
     log_trace "Calculating checksum of directory \"$1\""
+
     find "$1" -type f -print0 | sort -z | xargs -0 sha1sum | cut -d" " -f1 | sha1sum | cut -d" " -f1
 }
 
 url_valid() {
     log_trace "Checking if \"$1\" is a valid url"
-    URL_REGEX="(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]"
+
+    local URL_REGEX="(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]"
     [[ $1 =~ $URL_REGEX ]]
 }
 
@@ -334,10 +369,12 @@ url_file_exists() {
     local AUTH_OPTION=""
     if [ ! -z "$AUTH" ]; then 
         AUTH_OPTION="--digest --user $AUTH"
+
         log_trace "Setting authentication to \"$AUTH_OPTION\""
     fi
     
     log_trace "Checking if file \"$URL\" exists"
+
     curl --output /dev/null --silent $AUTH_OPTION --head --fail "$URL"
 }
 
@@ -358,15 +395,18 @@ url_file_download() {
     local AUTH_OPTION=""
     if [ ! -z "$AUTH" ]; then 
         log_trace "Setting authentication to \"$AUTH_OPTION\""
+
         AUTH_OPTION="--digest --user $AUTH"
     fi
 
     if [ ! -z "$TARGET_FILE_PATH" ]; then
         log_trace "Downloading file \"$URL\" to \"$TARGET_FILE_PATH\""
-        curl --silent --fail -o "$URL" "$TARGET_FILE_PATH"
+
+        curl --silent --fail $AUTH_OPTION -o "$TARGET_FILE_PATH" "$URL"
     else
         log_trace "Downloading file \"$URL\""
-        curl --silent --fail "$URL"
+
+        curl --silent --fail $AUTH_OPTION "$URL"
     fi
 }
 
@@ -392,6 +432,7 @@ dav_file_list() {
     local AUTH_OPTION=""
     if [ ! -z "$AUTH" ]; then 
         log_trace "Setting authentication to \"$AUTH_OPTION\""
+
         AUTH_OPTION="--digest --user $AUTH"
     fi
 
@@ -415,10 +456,12 @@ url_file_upload() {
     local AUTH_OPTION=""
     if [ ! -z "$AUTH" ]; then 
         log_trace "Setting authentication to \"$AUTH\""
+
         AUTH_OPTION="--digest --user $AUTH"
     fi
 
     log_trace "Uploading file \"$FILE_PATH\" to \"$URL\""
+
     curl --output /dev/null --fail --silent $AUTH_OPTION -T "$FILE_PATH" "$URL/"
 
 }
@@ -433,16 +476,20 @@ epm_file_upload() {
 
 archive_create() {
     log_trace "Creating archive \"$1\" from \"$2\""
+
     tar czf "$1" -C "$2" .
 }
 
 archive_extract() {
     log_trace "Extracting archive \"$1\" to \"$2\""
+
     tar xzf "$1" -C "$2"
 }
 
 yesNo() {
     log_trace "Querying the user"
+
+    local YN=""
     while true; do
         read -p "$1" YN
         YN=${YN,,}
@@ -487,9 +534,12 @@ newline() {
 }
 
 print_table1() {
-    HEADER_COL="$1"
-    COL_LEN=0
-    ROW_DATA=()
+    local HEADER_COL="$1"
+    local ROW
+    local COL
+    local TMP
+    local COL_LEN=0
+    local ROW_DATA=()
     while read -r ROW; do
         COL="$ROW"
         TMP=${#COL}
@@ -509,11 +559,16 @@ print_table1() {
 }
 
 print_table2() {
-    HEADER_COL1="$1"
-    HEADER_COL2="$2"
-    COL1_LEN=0
-    COL2_LEN=0
-    ROW_DATA=()
+    local HEADER_COL1="$1"
+    local HEADER_COL2="$2"
+    local ROW
+    local COL1
+    local COL2
+    local TMP1
+    local TMP2
+    local COL1_LEN=0
+    local COL2_LEN=0
+    local ROW_DATA=()
     while read -r ROW; do
         COL1="$(cut -d' ' -f1 <<< "$ROW")"
         COL2="$(cut -d' ' -f2 <<< "$ROW")"
@@ -537,13 +592,20 @@ print_table2() {
 }
 
 print_table3() {
-    HEADER_COL1="$1"
-    HEADER_COL2="$2"
-    HEADER_COL3="$3"
-    COL1_LEN=0
-    COL2_LEN=0
-    COL3_LEN=0
-    ROW_DATA=()
+    local HEADER_COL1="$1"
+    local HEADER_COL2="$2"
+    local HEADER_COL3="$3"
+    local ROW
+    local COL1
+    local COL2
+    local COL3
+    local TMP1
+    local TMP2
+    local TMP3
+    local COL1_LEN=0
+    local COL2_LEN=0
+    local COL3_LEN=0
+    local ROW_DATA=()
     while read -r ROW; do
         COL1="$(cut -d' ' -f1 <<< "$ROW")"
         COL2="$(cut -d' ' -f2 <<< "$ROW")"
@@ -572,59 +634,28 @@ print_table3() {
 
 command_begin() {
     local MSG="$1"
-    local STATUS="$2"
-    STATUS="${STATUS:-"RUNNING"}"
-    
-    printf "%s: " "$MSG"
-    save_cursor
-    printf "[$TERM_BLUE""$STATUS""$TERM_NORMAL]"
-}
 
-command_step() {
-    local STATUS="$1"
-
-    restore_cursor
-    clean_to_end_line
-    save_cursor
-    printf "[$TERM_BLUE""$STATUS""$TERM_NORMAL]"
-}
-
-download_step() {
-    command_step "DOWNLOAD"
-}
-
-upload_step() {
-    command_step "UPLOAD"
-}
-
-running_step() {
-    command_step "RUNNING"
+    printf "%s\n" "$MSG"
 }
 
 command_end() {
-    local STATUS="$1"
-    local MSG="$2"
+    local MSG="$1"
 
-    restore_cursor
-    clean_to_end_line
-    if empty "$MSG"; then
-        printf "[$TERM_GREEN""$STATUS""$TERM_NORMAL]\n"
-    else
-        printf "[$TERM_RED""$STATUS""$TERM_NORMAL][%s]\n" "$MSG"
-    fi
+    printf "%s\n" "$MSG"
 }
 
 command_ok() {
-    command_end "OK"
+    command_end "$1"
 }
 
 command_fail() {
-    command_end "FAIL" "${1:-}"
+    command_end "$1"
     exit 1
 }
 
 error() {
     log_debug "Exiting $PROGRAM_FILE on error with message \"$1\""
+
     printf "%s\n" "$1"
     exit 1
 }
@@ -643,16 +674,16 @@ usage() {
     printf "\tpack\t\tCreates a package\n"
     printf "\tpush\t\tSends a new version of the package to the package server\n"
     printf "\tupdate\t\tUpdates one or more packages\n"
-    printf "\tlist\t\tLists all the packages installed locally\n"
+    printf "\tlist\t\tLists the packages\n"
     printf "\tversion\t\tDisplays program version\n"
     printf "\thelp\t\tDisplays program help information\n"
 }
 
 command_usage() {
-    USAGE_CMD=$1
-    USAGE_CMD_SYNOPSIS=$2
-    USAGE_CMD_DESCRIPTION=$3
-    USAGE_MSG=$4
+    local USAGE_CMD=$1
+    local USAGE_CMD_SYNOPSIS=$2
+    local USAGE_CMD_DESCRIPTION=$3
+    local USAGE_MSG=$4
     
     log_trace "Printing command usage with message \"$USAGE_MSG\""
 
@@ -664,6 +695,7 @@ command_usage() {
 
 check() {
     log_trace "Checking base conditions"
+
     if ! file_exists "$EPM_ENV_FILE_PATH"; then
         printf "fatal: %s is not not a %s folder\n" "$EPM_ENV_FILE_PATH" "$PROGRAM_NAME"
         exit 1
@@ -690,30 +722,36 @@ function parse_yaml {
 
 is_package() {
     log_trace "Checking if \"$1\" is a package"
+
     [[ "$1" =~ ^[a-zA-Z]{1}[_a-zA-Z0-9]+$ ]]
 }
 
 prop_exists() {
     log_trace "Checking if key \"$1\" exists in \"$2\""
+
     grep -q "$1=" "$2"
 }
 
 prop_add() {
     log_trace "Adding key \"$1\" with value \"$2\" to \"$3\""
+
     echo "$1=$2" >> "$3"
 }
 
 prop_remove() {
     log_trace "Removing key \"$1\" from \"$2\""
+
     sed -i "/$1=/d" "$2"
 }
 
 prop_get() {
     if [ "$#" -eq 2 ]; then
         log_trace "Getting key \"$1\" value from \"$2\""
+
         grep -Po "(?<=^$1=).*" "$2"
     else
         log_trace "Getting key \"$1\" value from stdin"
+
         while read DATA; do
             grep -Po "(?<=^$1=).*" <<< "$DATA"
         done
@@ -722,6 +760,7 @@ prop_get() {
 
 prop_set() {
     log_trace "Setting property \"$1\" with value \"$2\" in \"$3\""
+
     sed -i "s|$1=.*|$1=$2|g" "$3"
 }
 
@@ -747,68 +786,46 @@ var_set() {
 
 var_list() {
     log_trace "Listing variables in \"$EPM_ENV_FILE_PATH\""
+
     sed -r "s|export (.*)=(.*)|\1 \2|" "$EPM_ENV_FILE_PATH"
 }
 
+pkg_file_get() {
+    log_trace "Getting package \"$1\" info from \"$2\""
+
+    file_read "$2" | parse_yaml | grep -Po "^$1:.*$"
+}
+
 pkg_os() {
-    PKG="$1"
-    PKG_PATH="$EPM_PKG_PATH/$PKG"
+    local PKG="$1"
+    local PKG_PATH="$EPM_PKG_PATH/$PKG"
 
     log_trace "Obtaining the \"$PKG\" os"
     if dir_exists "$PKG_PATH/$OS_ALL"; then
         log_trace "Returning $OS_ALL"
+
         echo "$OS_ALL"
     elif dir_exists "$PKG_PATH/$OS_NIX"; then
         log_trace "Returning $OS_NIX"
+
         echo "$OS_NIX"
     fi
 }
 
-pkg_metadata_new() {
-    local PKG_PARAM="$1"
-    local SHA1_PARAM="$2"
-    local TIMESTAMP_PARAM="$3"
-    local TENANT_PARAM="$4"
-    local TYPE_PARAM="$5"
-    local PARENT_PARAM="$6"
-    local DEPENDENCIES_PARAM="$7"
-    local DESCRIPTION_PARAM="$8"
-    local FILE_PATH_PARAM="$9"
-
-    log_trace "Adding package \"$PKG_PARAM\" with sha1 equals to \"$SHA1_PARAM\", timestamp equals to \"$TIMESTAMP_PARAM\", tenant equals to \"$TENANT_PARAM\", type equals to \"$TYPE_PARAM\", parent equals to \"$PARENT_PARAM\", dependencies equal to \"$DEPENDENCIES_PARAM\" and description equals to \"$DESCRIPTION_PARAM\" to \"$EPM_DAT_FILE_PATH\""
-
-    echo "$PKG_PARAM:" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_SHA1_KEY: $SHA1_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_TIMESTAMP_KEY: $TIMESTAMP_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_TENANT_KEY: $TENANT_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_TYPE_KEY: $TYPE_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_PARENT_KEY: $PARENT_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_DEPENDENCIES_KEY: $DEPENDENCIES_PARAM" >> "$FILE_PATH_PARAM"
-    echo "  $PKG_DESCRIPTION_KEY: $DESCRIPTION_PARAM" >> "$FILE_PATH_PARAM"
-}
-
-pkg_metadata_origin_get() {
-    PKG="$1"
-    PKG_METADATA_PATH="$2"
+pkg_metadata_data_get() {
+    local PKG="$1"
     
-    if ! empty "$PKG_METADATA_PATH"; then
-        PKG_OS="$(pkg_os "$PKG")"
-        PKG_SRC_PATH="$EPM_PKG_PATH/$PKG/$PKG_OS"
-        PKG_METADATA_PATH="$PKG_SRC_PATH/$PKG_METADATA_FILE_NAME"
-    fi
-    if file_exists "$PKG_METADATA_PATH"; then
-        file_read "$PKG_METADATA_PATH" | parse_yaml
-    fi
+    data_pkg_get "$PKG"
 }
 
 pkg_metadata_local_get() {
-    PKG="$1"
-    PKG_METADATA_PATH="$2"
-
-    if ! empty "$PKG_METADATA_PATH"; then
-        PKG_OS="$(pkg_os "$PKG")"
-        PKG_PATH="$EPM_PKG_PATH/$PKG"
-        PKG_METADATA_PATH="$PKG_PATH/$PKG-$PKG_OS.$YML_EXT"
+    local PKG="$1"
+    local PKG_METADATA_PATH="${2:-}"
+    
+    if empty "$PKG_METADATA_PATH"; then
+        local PKG_OS="$(pkg_os "$PKG")"
+        local PKG_SRC_PATH="$EPM_PKG_PATH/$PKG/$PKG_OS"
+        PKG_METADATA_PATH="$PKG_SRC_PATH/$PKG_METADATA_FILE_NAME"
     fi
     if file_exists "$PKG_METADATA_PATH"; then
         file_read "$PKG_METADATA_PATH" | parse_yaml
@@ -823,9 +840,11 @@ pkg_metadata_remote_get() {
     local YML_FILE=""
     if epm_file_exists "$YML_FILE_ALL"; then
         log_debug "Package for all exists in the server"
+
         YML_FILE="$YML_FILE_ALL"
     elif epm_file_exists "$YML_FILE_NIX"; then
         log_debug "Package for nix exists in the server"
+
         YML_FILE="$YML_FILE_NIX"
     fi
     if ! empty "$YML_FILE"; then
@@ -833,44 +852,58 @@ pkg_metadata_remote_get() {
     fi
 }
 
-pkg_metadata_auto_get() {
-    PKG="$1"
-    PKG_OS="$(pkg_os "$PKG")"
-    PKG_PATH="$EPM_PKG_PATH/$PKG"
-    PKG_SRC_PATH="$PKG_PATH/$PKG_OS"
-    PKG_METADATA_ORIGIN_PATH="$PKG_SRC_PATH/$PKG_METADATA_FILE_NAME"
-    PKG_METADATA_LOCAL_PATH="$PKG_PATH/$PKG-$PKG_OS.$YML_EXT"
+pkg_metadata_file_get() {
+    local PKG="$1"
+    local PKG_METADATA_PATH="$2"
 
-    if file_exists "$PKG_METADATA_LOCAL_PATH"; then
-        pkg_metadata_local_get "$PKG" "$PKG_METADATA_LOCAL_PATH"
-    elif file_exists "$PKG_METADATA_ORIGIN_PATH"; then
-        pkg_metadata_origin_get "$PKG" "$PKG_METADATA_ORIGIN_PATH"
+    pkg_file_get "$PKG" "$PKG_METADATA_PATH"
+}
+
+pkg_metadata_auto_get() {
+    local PKG="$1"
+    local PKG_OS="$(pkg_os "$PKG")"
+    local PKG_PATH="$EPM_PKG_PATH/$PKG"
+    local PKG_SRC_PATH="$PKG_PATH/$PKG_OS"
+    local PKG_METADATA_PACKAGE_PATH="$PKG_SRC_PATH/$PKG_METADATA_FILE_NAME"
+
+    if data_pkg_exists "$PKG"; then
+        pkg_metadata_data_get "$PKG"
+    elif file_exists "$PKG_METADATA_PACKAGE_PATH"; then
+        pkg_metadata_local_get "$PKG" "$PKG_METADATA_PACKAGE_PATH"
     else 
         pkg_metadata_remote_get "$PKG"
     fi
 }
 
 pkg_metadata_get() {
-    PKG="$1"
-    PKG_SOURCE="$2"
-    PKG_SOURCE="${PKG_SOURCE:-$PKG_METADATA_SOURCE_AUTO}"
+    local PKG="$1"
+    local PKG_SOURCE="${2:-}"
 
     case "$PKG_SOURCE" in
-        $PKG_METADATA_SOURCE_ORIGIN)
-            log_debug "Getting package metadata from origin"
-            pkg_metadata_origin_get "$PKG"
-            ;;
-        $PKG_METADATA_SOURCE_LOCAL)
+        "$PKG_METADATA_SOURCE_LOCAL")
             log_debug "Getting package metadata from local"
+
             pkg_metadata_local_get "$PKG"
             ;;
-        $PKG_METADATA_SOURCE_REMOTE)
+        "$PKG_METADATA_SOURCE_DATA")
+            log_debug "Getting package metadata from data"
+
+            pkg_metadata_data_get "$PKG"
+            ;;
+        "$PKG_METADATA_SOURCE_REMOTE")
             log_debug "Getting package metadata from remote"
+
             pkg_metadata_remote_get "$PKG"
             ;;
-        $PKG_METADATA_SOURCE_AUTO)
+        ""|"$PKG_METADATA_SOURCE_AUTO")
             log_debug "Calculating package source"
+
             pkg_metadata_auto_get "$PKG"
+            ;;
+        *)
+            log_debug "Getting metadata from file"
+
+            pkg_metadata_file_get "$PKG" "$PKG_SOURCE"
             ;;
     esac
 }
@@ -964,21 +997,49 @@ pkg_config_list_prop() {
 }
 
 data_pkg_add() {
-    local PKG_PARAM="$1"
-    local TYPE_PARAM="$2"
-    local OS_PARAM="$3"
-    local PARENT_PARAM="$4"
-    local DEPENDENCIES_PARAM="$5"
-    local DESCRIPTION_PARAM="$6"
+    local PKG="$1"
+    local METADATA_FILE_PATH="${2:-}"
 
-    log_trace "Adding package \"$PKG_PARAM\" with type equals to \"$TYPE_PARAM\", os equals to \"$OS_PARAM\", parent equals to \"$PARENT_PARAM\", dependencies equal to \"$DEPENDENCIES_PARAM\" and description equals to \"$DESCRIPTION_PARAM\" to \"$EPM_DAT_FILE_PATH\""
+    local PKG_SHA1=""
+    local PKG_TIMESTAMP=""
+    local PKG_OS="$(pkg_os "$PKG")"
+    local PKG_TENANT=""
+    local PKG_STATUS="$PKG_STATUS_LOCAL"
+    local PKG_TYPE=""
+    local PKG_RUNAS=""
+    local PKG_PARENT=""
+    local PKG_DEPENDENCIES=""
+    local PKG_DESCRIPTION=""
+    if ! empty "$METADATA_FILE_PATH"; then
+        PKG_SHA1="$(pkg_metadata_get_sha1 "$PKG" "$METADATA_FILE_PATH")"
+        PKG_TIMESTAMP="$(pkg_metadata_get_timestamp "$PKG" "$METADATA_FILE_PATH")"
+        PKG_TENANT="$(pkg_metadata_get_tenant "$PKG" "$METADATA_FILE_PATH")"
+        PKG_TYPE="$(pkg_metadata_get_type "$PKG" "$METADATA_FILE_PATH")"
+        PKG_PARENT="$(pkg_metadata_get_parent "$PKG" "$METADATA_FILE_PATH")"
+        PKG_DEPENDENCIES="$(pkg_metadata_get_dependencies "$PKG" "$METADATA_FILE_PATH")"
+        PKG_DESCRIPTION="$(pkg_metadata_get_description "$PKG" "$METADATA_FILE_PATH")"
+    else
+        PKG_SHA1="$(dir_checksum "$EPM_PKG_PATH/$PKG/$PKG_OS")"
+        PKG_TIMESTAMP="$(get_timestamp)"
+        PKG_TENANT="$(pkg_metadata_get_tenant "$PKG" "$PKG_METADATA_SOURCE_LOCAL")"
+        PKG_TYPE="$(pkg_metadata_get_type "$PKG" "$PKG_METADATA_SOURCE_LOCAL")"
+        PKG_PARENT="$(pkg_metadata_get_parent "$PKG" "$PKG_METADATA_SOURCE_LOCAL")"
+        PKG_DEPENDENCIES="$(pkg_metadata_get_dependencies "$PKG" "$PKG_METADATA_SOURCE_LOCAL")"
+        PKG_DESCRIPTION="$(pkg_metadata_get_description "$PKG" "$PKG_METADATA_SOURCE_LOCAL")"
+    fi
 
-    echo "$PKG_PARAM:" >> "$EPM_DAT_FILE_PATH"
-    echo "  $PKG_TYPE_KEY: $TYPE_PARAM" >> "$EPM_DAT_FILE_PATH"
-    echo "  $PKG_OS_KEY: $OS_PARAM" >> "$EPM_DAT_FILE_PATH"
-    echo "  $PKG_PARENT_KEY: $PARENT_PARAM" >> "$EPM_DAT_FILE_PATH"
-    echo "  $PKG_DEPENDENCIES_KEY: $DEPENDENCIES_PARAM" >> "$EPM_DAT_FILE_PATH"
-    echo "  $PKG_DESCRIPTION_KEY: $DESCRIPTION_PARAM" >> "$EPM_DAT_FILE_PATH"
+    log_trace "Adding package \"$PKG\" with sha1 equals to \"$PKG_SHA1\", timestamp equals to \"$PKG_TIMESTAMP\", os equals to \"$PKG_OS\", tenant equals to \"$PKG_TENANT\", status equals to \"$PKG_STATUS\", type equals to \"$PKG_TYPE\", parent equals to \"$PKG_PARENT\", dependencies equal to \"$PKG_DEPENDENCIES\" and description equals to \"$PKG_DESCRIPTION\" to \"$EPM_DAT_FILE_PATH\""
+
+    printf "%s:\n" "$PKG" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_SHA1_KEY" "$PKG_SHA1" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TIMESTAMP_KEY" "$PKG_TIMESTAMP" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_OS_KEY" "$PKG_OS" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TENANT_KEY" "$PKG_TENANT" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_STATUS_KEY" "$PKG_STATUS" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TYPE_KEY" "$PKG_TYPE" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_PARENT_KEY" "$PKG_PARENT" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_DEPENDENCIES_KEY" "$PKG_DEPENDENCIES" >> "$EPM_DAT_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_DESCRIPTION_KEY" "$PKG_DESCRIPTION" >> "$EPM_DAT_FILE_PATH"
 }
 
 data_pkg_remove() {
@@ -990,12 +1051,12 @@ data_pkg_list() {
 }
 
 data_pkg_get() {
-    log_trace "Getting package \"$1\" info from \"$EPM_DAT_FILE_PATH\""
-    file_read "$EPM_DAT_FILE_PATH" | parse_yaml | grep -Po "^$1:.*$"
+    pkg_file_get "$1" "$EPM_DAT_FILE_PATH"
 }
 
 data_pkg_exists() {
-    log_trace "Checking if package \"$1\" is installed"
+    log_trace "Checking if the package \"$1\" was pulled"
+
     ! empty "$(data_pkg_get "$1")"
 }
 
@@ -1045,16 +1106,46 @@ data_pkg_get_type() {
 
 data_pkg_is_single() {
     local PKG_TYPE="$(data_pkg_get_type "$1")" 
+
     [ "$PKG_TYPE" == "$PKG_TYPE_SINGLE" ]
 }
 
 data_pkg_is_bundle() {
     local PKG_TYPE="$(data_pkg_get_type "$1")" 
+
     [ "$PKG_TYPE" == "$PKG_TYPE_BUNDLE" ]
 }
 
 data_pkg_set_type() {
     data_pkg_set_prop "$1" "$PKG_TYPE_KEY" "$2" 
+}
+
+data_pkg_get_status() {
+    data_pkg_get_prop "$1" "$PKG_STATUS_KEY"
+}
+
+data_pkg_is_local() {
+    local PKG_STATUS="$(data_pkg_get_status "$1")" 
+
+    [ "$PKG_STATUS" == "$PKG_STATUS_LOCAL" ]
+}
+
+data_pkg_is_installed() {
+    local PKG_STATUS="$(data_pkg_get_status "$1")" 
+
+    [ "$PKG_STATUS" == "$PKG_STATUS_INSTALLED" ]
+}
+
+data_pkg_set_status() {
+    data_pkg_set_prop "$1" "$PKG_STATUS_KEY" "$2" 
+}
+
+data_pkg_set_status_local() {
+    data_pkg_set_status "$1" "$PKG_STATUS_LOCAL"   
+}
+
+data_pkg_set_status_installed() {
+    data_pkg_set_status "$1" "$PKG_STATUS_INSTALLED"   
 }
 
 data_pkg_get_os() {
@@ -1094,11 +1185,12 @@ data_pkg_set_description() {
 }
 
 data_pkg_get_dependents() {
-    MODE="$2"
-    MODE="${MODE:-$PKG_DEPENDENTS_MODE_ALL}"
+    local MODE="$2"
+    local MODE="${MODE:-$PKG_DEPENDENTS_MODE_ALL}"
 
     log_trace "Getting all package dependents from \"$1\" in \"$MODE\" mode"
 
+    local PKG=""
     while read -r PKG; do
         if [ "$MODE" == "$PKG_DEPENDENTS_MODE_PARENT" ]; then
             local PARENT="$(data_pkg_get_parent "$PKG")"
@@ -1226,8 +1318,8 @@ env_set_check() {
 }
 
 env_set() {
-    CONFIG_SET_NAME="$1"
-    CONFIG_SET_VALUE="$2"
+    local CONFIG_SET_NAME="$1"
+    local CONFIG_SET_VALUE="$2"
 
     log_debug "Executing env-set command with \"$CONFIG_SET_NAME\" and \"$CONFIG_SET_NAME\""
 
@@ -1253,8 +1345,8 @@ env_default_check() {
 }
 
 env_default() {
-    CONFIG_DEFAULT_NAME="$1"
-    CONFIG_DEFAULT_VALUE="$2"   
+    local CONFIG_DEFAULT_NAME="$1"
+    local CONFIG_DEFAULT_VALUE="$2"   
     
     log_debug "Executing the env-default command with \"$CONFIG_DEFAULT_NAME\" and \"$CONFIG_DEFAULT_VALUE\""
 
@@ -1293,10 +1385,6 @@ env_check() {
     check
 
     log_debug "Checking $USAGE_CMD command preconditions"
-    
-    if empty "$1"; then
-        command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "You must specify a name or an option"
-    fi
 }
 
 env() {
@@ -1320,6 +1408,9 @@ env() {
         --list)
             env_list
             ;;
+        "")
+            env_list
+            ;;
         *)
             env_default "$1" "$2"
             ;;
@@ -1327,10 +1418,10 @@ env() {
 }
 
 lib_options() {
-    OPTION_ADD="\t--add\t\tadd a new library: path"
-    OPTION_REMOVE="\t--remove\tremove a library: name"
-    OPTION_LIST="\t--list\t\tlists all the libraries"
-    OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_LIST"
+    local OPTION_ADD="\t--add\t\tadd a new library: path"
+    local OPTION_REMOVE="\t--remove\tremove a library: name"
+    local OPTION_LIST="\t--list\t\tlists all the libraries"
+    local OPTIONS="$OPTION_ADD\n$OPTION_REMOVE\n$OPTION_LIST"
 
     printf "%b\n" "$OPTIONS"
 }
@@ -1350,11 +1441,11 @@ lib_add_check() {
 }
 
 lib_add_exec() {
-    LIB_ADD_PATH="$1"
-    LIB_ADD_FILE_NAME="$(basename -- "$LIB_ADD_PATH")"
-    LIB_ADD_NAME="${LIB_ADD_FILE_NAME%.*}"
-    LIB_ADD_NEW_PATH="$EPM_LIB_PATH/${LIB_ADD_NAME}.sh"
-    LIB_ADD_BCK_PATH="${LIB_ADD_NEW_PATH}.bak"
+    local LIB_ADD_PATH="$1"
+    local LIB_ADD_FILE_NAME="$(basename -- "$LIB_ADD_PATH")"
+    local LIB_ADD_NAME="${LIB_ADD_FILE_NAME%.*}"
+    local LIB_ADD_NEW_PATH="$EPM_LIB_PATH/${LIB_ADD_NAME}.sh"
+    local LIB_ADD_BCK_PATH="${LIB_ADD_NEW_PATH}.bak"
 
     if file_exists "$LIB_ADD_NEW_PATH"; then
         file_move "$LIB_ADD_NEW_PATH" "$LIB_ADD_BCK_PATH"
@@ -1391,8 +1482,8 @@ lib_remove_check() {
 }
 
 lib_remove_exec() {
-    LIB_REMOVE_NAME="$1"
-    LIB_REMOVE_PATH="$EPM_LIB_PATH/$1.sh"
+    local LIB_REMOVE_NAME="$1"
+    local LIB_REMOVE_PATH="$EPM_LIB_PATH/$1.sh"
 
     log_trace "Removing library from \"$LIB_REMOVE_PATH\""
     rm -f "$LIB_REMOVE_PATH"
@@ -1418,6 +1509,8 @@ lib_list_check() {
 }
 
 lib_list_exec() {
+    local LIB_FILE_NAME=""
+
     while read -r LIB_FILE_NAME; do
         echo "${LIB_FILE_NAME%.*}"
     done <<< "$(file_list "$EPM_LIB_PATH")"
@@ -1512,12 +1605,14 @@ init_env() {
     var_add "$EPM_LIB_PATH_KEY" "$EPM_LIB_PATH"
     var_add "$EPM_PKG_PATH_KEY" "$EPM_PKG_PATH"
     var_add "$EPM_STG_PATH_KEY" "$EPM_STG_PATH"
+    var_add "$EPM_LOG_PATH_KEY" "$EPM_LOG_PATH"
+    var_add "$EPM_ENV_FILE_PATH_KEY" "$EPM_ENV_FILE_PATH"
+    var_add "$EPM_LIB_FILE_PATH_KEY" "$EPM_LIB_FILE_PATH"
     var_add "$EPM_PKG_SRV_KEY" "$EPM_PKG_SRV"
     if [ ! -z "$EPM_PKG_SRV_USER" ] || [ ! -z "$EPM_PKG_SRV_PASSWORD" ]; then
         var_add "$EPM_PKG_SRV_USER_KEY" "$EPM_PKG_SRV_USER"
         var_add "$EPM_PKG_SRV_PASSWORD_KEY" "$EPM_PKG_SRV_PASSWORD"
     fi 
-    var_add "$EPM_LOG_PATH_KEY" "$EPM_LOG_PATH"
 }
 
 init_lib() {
@@ -1549,6 +1644,7 @@ init_lib() {
     printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
     printf "require() {\n" >> "$EPM_LIB_FILE_PATH"
     printf "\t%s require \"%s\" \"%s\" \"%s\"\n" '$PROGRAM_PATH' '$1' '$2' '$3' >> "$EPM_LIB_FILE_PATH" 
+    printf "\tsource \"%s\"\n" '$EPM_ENV_FILE_PATH' >> "$EPM_LIB_FILE_PATH"
     printf "}\n\n" >> "$EPM_LIB_FILE_PATH"
     printf "install() {\n" >> "$EPM_LIB_FILE_PATH"
     printf "\t%s install \"%s\"\n" '$PROGRAM_PATH' '$1' >> "$EPM_LIB_FILE_PATH" 
@@ -1658,6 +1754,10 @@ init_begin() {
     command_begin "Initializing $PROGRAM_NAME"
 }
 
+init_end() {
+    command_begin "$PROGRAM_NAME initialized"
+}
+
 init() {
     local INIT_URL="$1"
     local INIT_USER="$2"
@@ -1680,7 +1780,7 @@ init() {
 
     init_exec "$INIT_URL" "$INIT_USER" "$INIT_PASSWORD"
 
-    command_ok
+    init_end
 }
 
 pull_check() {
@@ -1749,19 +1849,22 @@ pull_exec() {
             fi
             
             dir_create "$PKG_STG_PATH"
-            download_step
+            command_begin "Downloading package $PULL_PACKAGE"
             if ! epm_file_download "$YML_FILE_NAME" "$YML_STG_FILE_PATH" || ! epm_file_download "$PKG_FILE_NAME" "$PKG_STG_FILE_PATH"; then
                 file_delete "$YML_STG_FILE_PATH"
                 file_delete "$PKG_STG_FILE_PATH"
                 command_fail "Unable to download package \"$PULL_PACKAGE\" to \"$PKG_STG_PATH\""
             fi
-            running_step
+            command_ok "Package downloaded"
         fi
 
         dir_create "$PKG_OS_PATH"
         archive_extract "$PKG_STG_FILE_PATH" "$PKG_OS_PATH"
         file_delete "$PKG_STG_FILE_PATH"
-        file_move "$YML_STG_FILE_PATH" "$PKG_PATH"
+        data_pkg_add "$PULL_PACKAGE" "$YML_STG_FILE_PATH"
+        file_delete "$YML_STG_FILE_PATH"
+    elif ! data_pkg_exists "$PULL_PACKAGE"; then
+        data_pkg_add "$PULL_PACKAGE"
     fi
 }
 
@@ -1769,12 +1872,16 @@ pull_begin() {
     command_begin "Pulling package $1"
 }
 
+pull_end() {
+    command_ok "Package pulled"
+}
+
 pull_package_exec() {
     pull_begin "$1"
 
     pull_exec "$1"
 
-    command_ok
+    pull_end
 }
 
 pull_package() {
@@ -1790,38 +1897,41 @@ pull() {
 }
 
 uninstall_exec() {
-    UNINSTALL_PACKAGE="$1"
-    PKG_PATH="$EPM_PKG_PATH/$UNINSTALL_PACKAGE"
+    local UNINSTALL_PACKAGE="$1"
 
-    PKG_OS="$(pkg_os "$UNINSTALL_PACKAGE")"
-    PKG_OS_PATH="$PKG_PATH/$PKG_OS"
-    PKG_UNINSTALL_SH_PATH="$PKG_OS_PATH/$PKG_UNINSTALL_FILE_NAME"
+    local PKG_PATH="$EPM_PKG_PATH/$UNINSTALL_PACKAGE"
+    local PKG_OS="$(pkg_os "$UNINSTALL_PACKAGE")"
+    local PKG_OS_PATH="$PKG_PATH/$PKG_OS"
+    local PKG_UNINSTALL_SH_PATH="$PKG_OS_PATH/$PKG_UNINSTALL_FILE_NAME"
 
     log_debug "Loading $PROGRAM_NAME environment located at \"$EPM_ENV_FILE_PATH\""
     source "$EPM_ENV_FILE_PATH"
     log_debug "Loading $PROGRAM_NAME libraries located at \"$EPM_LIB_FILE_PATH\""
     source "$EPM_LIB_FILE_PATH"
+    log_debug "Executing \"$PKG_UNINSTALL_SH_PATH\" install script"
 
     if $PKG_UNINSTALL_SH_PATH; then
-        data_pkg_remove "$UNINSTALL_PACKAGE"
+        data_pkg_set_status_local "$UNINSTALL_PACKAGE"
     else
+        log_debug "Uninstallation of package \"$INSTALL_PACKAGE\" failed"
         command_fail
     fi
 }
 
 get_uninstall_dependencies() {
-    PKG_IN_LIST=("$1")
+    local PKG_IN_LIST=("$1")
     declare -A PKG_OUT_LIST
 
-    PKG_CURRENT=""
-    PKG_LEVEL=0
+    local PKG_CURRENT=""
+    local PKG_LEVEL=0
+    local PKG=""
     while [ ${#PKG_IN_LIST[@]} -gt 0 ]; do
         PKG_CURRENT="${PKG_IN_LIST[0]}"
-        if data_pkg_exists "$PKG_CURRENT"; then
+        if data_pkg_is_installed "$PKG_CURRENT"; then
             PKG_OUT_LIST["$PKG_CURRENT"]=$PKG_LEVEL
             
             while read -r PKG; do
-                if ! empty "$PKG" && data_pkg_exists "$PKG"; then
+                if ! empty "$PKG" && data_pkg_is_installed "$PKG"; then
                     PKG_IN_LIST+=("$PKG")
                 fi
             done <<< "$(data_pkg_get_dependents "$PKG_CURRENT")"
@@ -1831,6 +1941,7 @@ get_uninstall_dependencies() {
         PKG_IN_LIST=("${PKG_IN_LIST[@]:1}")
     done
     
+    local KEY=""
     for KEY in "${!PKG_OUT_LIST[@]}"; do
         echo ${PKG_OUT_LIST["$KEY"]} "$KEY"
     done | sort -rn -k1 | cut -f2 -d' '
@@ -1851,7 +1962,7 @@ uninstall_check() {
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
     fi
 
-    if ! data_pkg_exists "$1"; then
+    if ! data_pkg_is_installed "$1"; then
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package \"$1\" is not installed"
     fi
 }
@@ -1861,7 +1972,7 @@ uninstall_begin() {
 }
 
 uninstall_end() {
-    command_ok
+    command_ok "Package uninstalled"
 }
 
 uninstall_package_exec() {
@@ -1869,6 +1980,8 @@ uninstall_package_exec() {
 }
 
 uninstall_package() {
+    local PKG=""
+
     while read -r PKG; do
         local PKG_TYPE="$(pkg_metadata_get_type "$PKG")"
         
@@ -1918,6 +2031,7 @@ purge_exec() {
     local PKG_PATH="$EPM_PKG_PATH/$PURGE_PACKAGE"
     if dir_exists "$PKG_PATH"; then
         dir_delete "$PKG_PATH" 
+        data_pkg_remove "$PURGE_PACKAGE"
     fi
 }
 
@@ -1925,16 +2039,20 @@ purge_begin() {
     command_begin "Purging package $1"
 }
 
+purge_end() {
+    command_ok "Package purged"
+}
+
 purge_package_exec() {
     purge_begin "$1"
 
     purge_exec "$1"
 
-    command_ok
+    purge_end
 }
 
 purge_package() {
-    uninstall_package "$1"   
+    uninstall_package "$1" 
 
     purge_package_exec "$1"
 }
@@ -1948,48 +2066,40 @@ purge() {
 }
 
 install_exec() {
-    INSTALL_PACKAGE=$1
-    PKG_PATH="$EPM_PKG_PATH/$INSTALL_PACKAGE"
+    local INSTALL_PACKAGE="$1"
 
     pull_exec "$INSTALL_PACKAGE"
-    PKG_OS="$(pkg_os "$INSTALL_PACKAGE")"
-    PKG_OS_PATH="$PKG_PATH/$PKG_OS"
-    PKG_TYPE="$(pkg_metadata_get_type "$INSTALL_PACKAGE")"
-    PKG_PARENT="$(pkg_metadata_get_parent "$INSTALL_PACKAGE")"
-    PKG_DEPENDENCIES="$(pkg_metadata_get_dependencies "$INSTALL_PACKAGE")"
-    PKG_DESCRIPTION="$(pkg_metadata_get_description "$INSTALL_PACKAGE")"
-    PKG_INSTALL_SH_PATH="$PKG_OS_PATH/$PKG_INSTALL_FILE_NAME"
+
+    local PKG_PATH="$EPM_PKG_PATH/$INSTALL_PACKAGE"
+    local PKG_OS="$(pkg_os "$INSTALL_PACKAGE")"
+    local PKG_OS_PATH="$PKG_PATH/$PKG_OS"
+    local PKG_INSTALL_SH_PATH="$PKG_OS_PATH/$PKG_INSTALL_FILE_NAME"
 
     log_debug "Loading $PROGRAM_NAME environment located at \"$EPM_ENV_FILE_PATH\""
-    source "$EPM_ENV_FILE_PATH" 
+    source "$EPM_ENV_FILE_PATH"
     log_debug "Loading $PROGRAM_NAME libraries located at \"$EPM_LIB_FILE_PATH\""
     source "$EPM_LIB_FILE_PATH"
+    log_debug "Executing \"$PKG_INSTALL_SH_PATH\" install script"
 
-    data_pkg_add "$INSTALL_PACKAGE"\
-        "$PKG_TYPE"\
-        "$PKG_OS"\
-        "$PKG_PARENT"\
-        "$PKG_DEPENDENCIES"\
-        "$PKG_DESCRIPTION"
-    
-    log_debug "Executing \"$PKG_TYPE\" install script"
-    if ! $PKG_INSTALL_SH_PATH; then
+    if $PKG_INSTALL_SH_PATH; then
+        data_pkg_set_status_installed "$INSTALL_PACKAGE"
+    else
         log_debug "Installation of package \"$INSTALL_PACKAGE\" failed"
-        data_pkg_remove "$INSTALL_PACKAGE"             
         command_fail
     fi
 }
 
 get_install_dependencies() {
-    PKG_IN_LIST=("$1")
+    local PKG_IN_LIST=("$1")
     declare -A PKG_OUT_LIST
 
-    PKG_CURRENT=""
-    PKG_LEVEL=0
+    local PKG_CURRENT=""
+    local PKG_LEVEL=0
+    local DEP=""
     while [ ${#PKG_IN_LIST[@]} -gt 0 ]; do
         PKG_CURRENT="${PKG_IN_LIST[0]}"
         
-        if ! data_pkg_exists "$PKG_CURRENT"; then
+        if ! data_pkg_is_installed "$PKG_CURRENT"; then
             PKG_OUT_LIST["$PKG_CURRENT"]=$PKG_LEVEL
             PKG_PARENT=$(pkg_metadata_get_parent "$PKG_CURRENT")
             if ! empty "$PKG_PARENT"; then
@@ -2006,6 +2116,7 @@ get_install_dependencies() {
         PKG_IN_LIST=("${PKG_IN_LIST[@]:1}")
     done
 
+    local KEY=""
     for KEY in "${!PKG_OUT_LIST[@]}"; do
         echo ${PKG_OUT_LIST["$KEY"]} "$KEY"
     done | sort -rn -k1 | cut -f2 -d' '
@@ -2026,7 +2137,7 @@ install_check() {
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
     fi
 
-    if data_pkg_exists "$1"; then
+    if data_pkg_is_installed "$1"; then
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package \"$1\" is already installed"
     fi
 }
@@ -2036,7 +2147,7 @@ install_begin() {
 }
 
 install_end() {
-    command_ok
+    command_ok "Package installed"
 }
 
 install_package_exec() {
@@ -2044,6 +2155,8 @@ install_package_exec() {
 }
 
 install_package() {
+    local PKG=""
+
     while read -r PKG; do
         install_package_exec "$PKG"
     done <<< "$(get_install_dependencies "$1")"
@@ -2091,7 +2204,7 @@ require_check() {
 }
 
 require() {
-    local REQUIRE_SOURCE_PKG="${1:-}"
+    local REQUIRE_SOURCE_PKG="$1"
     local REQUIRE_TARGET_TYPE="${2:-}"
     local REQUIRE_TARGET_PKG="${3:-}"
 
@@ -2101,7 +2214,7 @@ require() {
 
     local REQUIRE_PKG="${3:-"$2"}"
     REQUIRE_PKG="${REQUIRE_PKG:-"$1"}"
-    if ! data_pkg_exists "$REQUIRE_PKG"; then
+    if ! data_pkg_is_installed "$REQUIRE_PKG"; then
         log_debug "Package \"$REQUIRE_PKG\" is not installed proceding with the installation"
 
         install_package "$REQUIRE_PKG"
@@ -2148,15 +2261,15 @@ require() {
 }
 
 pack_build() {
-    PKG="$1"
-    PKG_OS="$(pkg_os "$PKG")"
+    local PKG="$1"
+    local PKG_OS="$(pkg_os "$PKG")"
 
-    PKG_SRC_PATH="$EPM_PKG_PATH/$PKG/$PKG_OS"
-    PKG_PACK_FILE_PATH="$PKG_SRC_PATH/$PKG_PACK_FILE_NAME"
-    PKG_FILE_NAME="$PKG-$PKG_OS.$PKG_EXT"
-    PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
-    YML_FILE_NAME="$PKG-$PKG_OS.$YML_EXT"
-    YML_FILE_PATH="$EPM_STG_PATH/$YML_FILE_NAME"
+    local PKG_SRC_PATH="$EPM_PKG_PATH/$PKG/$PKG_OS"
+    local PKG_PACK_FILE_PATH="$PKG_SRC_PATH/$PKG_PACK_FILE_NAME"
+    local PKG_FILE_NAME="$PKG-$PKG_OS.$PKG_EXT"
+    local PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
+    local YML_FILE_NAME="$PKG-$PKG_OS.$YML_EXT"
+    local YML_FILE_PATH="$EPM_STG_PATH/$YML_FILE_NAME"
 
     if file_exists "$PKG_PACK_FILE_PATH"; then
         log_debug "Executing package \"$PKG\" custom pack script"
@@ -2180,24 +2293,27 @@ pack_build() {
     else
         file_create "$YML_FILE_PATH"
     fi
-    
-    pkg_metadata_new "$PKG" \
-        "$PKG_SHA1"\
-        "$PKG_TIMESTAMP"\
-        "$PKG_TENANT"\
-        "$PKG_TYPE"\
-        "$PKG_PARENT"\
-        "$PKG_DEPENDENCIES"\
-        "$PKG_DESCRIPTION"\
-        "$YML_FILE_PATH"
+
+    log_trace "Creating package \"$PKG\" metadata file \"$YML_FILE_PATH\" with sha1 equals to \"$PKG_SHA1\", timestamp equals to \"$PKG_TIMESTAMP\", tenant equals to \"$PKG_TENANT\", type equals to \"$PKG_TYPE\", parent equals to \"$PKG_PARENT\", dependencies equal to \"$PKG_DEPENDENCIES\" and description equals to \"$PKG_DESCRIPTION\""
+
+    printf "%s:\n" "$PKG" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_SHA1_KEY" "$PKG_SHA1" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TIMESTAMP_KEY" "$PKG_TIMESTAMP" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TENANT_KEY" "$PKG_TENANT" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_TYPE_KEY" "$PKG_TYPE" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_PARENT_KEY" "$PKG_PARENT" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_DEPENDENCIES_KEY" "$PKG_DEPENDENCIES" >> "$YML_FILE_PATH"
+    printf "  %s: %s\n" "$PKG_DESCRIPTION_KEY" "$PKG_DESCRIPTION" >> "$YML_FILE_PATH"
 }
 
 pack_exec() {
-    PACK_PKG="$1"
+    local PACK_PKG="$1"
 
     log_debug "Loading $PROGRAM_NAME environment located at \"$EPM_ENV_FILE_PATH\""
+
     source "$EPM_ENV_FILE_PATH"
     source "$EPM_LIB_FILE_PATH"
+
     pack_build "$PACK_PKG"
 }
 
@@ -2216,7 +2332,7 @@ pack_check() {
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Invalid package name: \"$1\""
     fi
 
-    PKG_PATH="$EPM_PKG_PATH/$1"
+    local PKG_PATH="$EPM_PKG_PATH/$1"
     if ! dir_exists "$PKG_PATH"; then
         command_usage "$USAGE_CMD" "$USAGE_CMD_SYNOPSIS" "$USAGE_CMD_DESCRIPTION" "Package $1 does not exist"
     fi
@@ -2224,6 +2340,10 @@ pack_check() {
 
 pack_begin() {
     command_begin "Packing package $1"
+}
+
+pack_end() {
+    command_ok "Package packed"
 }
 
 pack() {
@@ -2235,7 +2355,7 @@ pack() {
     
     pack_exec "$1"
     
-    command_ok
+    pack_end
 }
 
 push_exec() {
@@ -2246,12 +2366,12 @@ push_exec() {
 
     log_debug "Pushing package \"$PUSH_PACKAGE\""
 
-    YML_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$YML_EXT"
-    YML_FILE_PATH="$EPM_STG_PATH/$YML_FILE_NAME"
-    PKG_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$PKG_EXT"
-    PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
+    local YML_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$YML_EXT"
+    local YML_FILE_PATH="$EPM_STG_PATH/$YML_FILE_NAME"
+    local PKG_FILE_NAME="$PUSH_PACKAGE-$PUSH_OS.$PKG_EXT"
+    local PKG_FILE_PATH="$EPM_STG_PATH/$PKG_FILE_NAME"
 
-    upload_step
+    command_begin "Uploading package $PUSH_PACKAGE"
     if epm_file_upload "$YML_FILE_PATH"; then
         file_move "$YML_FILE_PATH" "$PKG_PATH"
         if epm_file_upload "$PKG_FILE_PATH"; then
@@ -2262,7 +2382,7 @@ push_exec() {
     else
         command_fail "Failed to upload \"$YML_FILE_PATH\""
     fi
-    running_step
+    command_ok "Package uploaded"
 }
 
 push_check() {
@@ -2297,11 +2417,16 @@ push_begin() {
     command_begin "Pushing package $1"
 }
 
+push_end() {
+    command_begin "Package pushed"
+}
+
 push() {
     log_debug "executing the push command with \"$1\""
 
     push_check "$1"
 
+    local PKG_LIST=""
     case "$1" in
         --all)
             log_debug "Pushing all packages"
@@ -2313,6 +2438,8 @@ push() {
             ;;
     esac
 
+    local PKG_PATH=""
+    local PKG_NAME=""
     for PKG_PATH in $PKG_LIST; do
         PKG_NAME="$(basename $PKG_PATH)"
 
@@ -2321,22 +2448,23 @@ push() {
         pack_exec "$PKG_NAME"
         push_exec "$PKG_NAME"
 
-        command_ok
+        push_end
     done
 }
 
 get_update_dependencies() {
-    PKG_IN_LIST=("$1")
+    local PKG_IN_LIST=("$1")
     declare -A PKG_OUT_LIST
 
-    PKG_CURRENT=""
-    PKG_LEVEL=0
+    local PKG_CURRENT=""
+    local PKG_LEVEL=0
+    local PKG=""
     while [ ${#PKG_IN_LIST[@]} -gt 0 ]; do
         PKG_CURRENT="${PKG_IN_LIST[0]}"
         PKG_OUT_LIST["$PKG_CURRENT"]=$PKG_LEVEL
-        if data_pkg_exists "$PKG_CURRENT"; then
+        if data_pkg_is_installed "$PKG_CURRENT"; then
             while read -r PKG; do
-                if ! empty "$PKG" && data_pkg_exists "$PKG"; then
+                if ! empty "$PKG" && data_pkg_is_installed "$PKG"; then
                     PKG_IN_LIST+=("$PKG")
                 fi
             done <<< "$(data_pkg_get_dependents "$PKG_CURRENT" "$PKG_DEPENDENTS_MODE_PARENT")"
@@ -2346,24 +2474,27 @@ get_update_dependencies() {
         PKG_IN_LIST=("${PKG_IN_LIST[@]:1}")
     done
 
+    local KEY=""
     for KEY in "${!PKG_OUT_LIST[@]}"; do
         echo ${PKG_OUT_LIST["$KEY"]} "$KEY"
     done | sort -rn -k1 | cut -f2 -d' '
 }
 
 package_updated() {
-    PKG="$1"
-    PKG_OS="$(pkg_os "$PKG")"
-    EPM_PKG_SRV="$(var_get "$EPM_PKG_SRV_KEY")"
-    YML_FILE_NAME="$PKG-$PKG_OS.$YML_EXT"
-    YML_FILE_PATH="$EPM_PKG_PATH/$PKG/$YML_FILE_NAME"
-    YML_URL="$EPM_PKG_SRV/$YML_FILE_NAME"
+    local PKG="$1"
 
-    LOCAL_SHA1=$(pkg_metadata_get_sha1 "$PKG" "$PKG_METADATA_SOURCE_LOCAL")
-    REMOTE_SHA1=$(pkg_metadata_get_sha1 "$PKG" "$PKG_METADATA_SOURCE_REMOTE")
+    local PKG_OS="$(pkg_os "$PKG")"
+    local EPM_PKG_SRV="$(var_get "$EPM_PKG_SRV_KEY")"
+    local YML_FILE_NAME="$PKG-$PKG_OS.$YML_EXT"
+    local YML_FILE_PATH="$EPM_PKG_PATH/$PKG/$YML_FILE_NAME"
+    local YML_URL="$EPM_PKG_SRV/$YML_FILE_NAME"
+
+    local LOCAL_SHA1=$(pkg_metadata_get_sha1 "$PKG" "$PKG_METADATA_SOURCE_DATA")
+    local REMOTE_SHA1=$(pkg_metadata_get_sha1 "$PKG" "$PKG_METADATA_SOURCE_REMOTE")
 
     if [ "$LOCAL_SHA1" != "$REMOTE_SHA1" ]; then
         log_trace "\"$PKG\" hash ($LOCAL_SHA1) is different from remote hash ($REMOTE_SHA1)"
+
         return 0
     fi
     
@@ -2375,11 +2506,13 @@ package_updated() {
 get_updated_packages() {
     if ! empty "$1"; then
         log_trace "Checking if package \"$1\" was updated"
+
         if package_updated "$1"; then
             echo "$1"
         fi
     else
         log_trace "Checking all the packages for an update"
+        local PKG=""
         while read -r PKG; do
             if package_updated "$PKG"; then
                 echo "$PKG"
@@ -2389,11 +2522,12 @@ get_updated_packages() {
 }
 
 update_package() {
-    DEPENDENCIES="$(get_update_dependencies "$1")"
+    local DEPENDENCIES="$(get_update_dependencies "$1")"
     declare -A DATA_PKG
 
+    local PKG=""
     while read -r PKG; do
-        if data_pkg_exists "$PKG"; then
+        if data_pkg_is_installed "$PKG"; then
             echo "Uninstalling \"$PKG\""
             #uninstall_package_exec "$PKG"
             DATA_PKG["$PKG"]=1
@@ -2415,6 +2549,8 @@ update_package() {
 }
 
 update_packages() {
+    local PKG=""
+
     while read -r PKG; do
         if ! empty "$PKG"; then
             update_package "$PKG"
@@ -2536,13 +2672,27 @@ list_check() {
 }
 
 list_local_packages() {
-    local PKG_PATH="$EPM_PKG_PATH"
+    local PKG=""
+    local STATUS=""
+    while read -r PKG; do
+        STATUS="$(data_pkg_get_status "$PKG")" 
 
-    dir_list "$PKG_PATH"
+        if [ "$STATUS" != "$PKG_STATUS_INSTALLED" ]; then
+            echo "$PKG"
+        fi
+    done <<< "$(dir_list "$EPM_PKG_PATH")"
 }
 
 list_installed_packages() {
-    data_pkg_list
+    local PKG=""
+    local STATUS=""
+    while read -r PKG; do
+        STATUS="$(data_pkg_get_status "$PKG")" 
+
+        if [ "$STATUS" == "$PKG_STATUS_INSTALLED" ]; then
+            echo "$PKG"
+        fi
+    done <<< "$(data_pkg_list)"
 }
 
 list_remote_packages() {
@@ -2563,12 +2713,12 @@ list_remote_packages() {
 }
 
 list_exec() {
-    MODE="$1"
-    MODE="${MODE:-"--all"}"
+    local MODE="${1:-"--all"}"
     declare -A PACKAGES
 
+    local PKG=""
     if [ "$MODE" = "--all" ] || [ "$MODE" = "-r" ] || [ "$MODE" = "--remote" ]; then 
-        REMOTE_PKG="$(list_remote_packages)"
+        local REMOTE_PKG="$(list_remote_packages)"
         while read -r PKG; do
             if ! empty "$PKG"; then
                 PACKAGES["$PKG"]="REMOTE"
@@ -2577,7 +2727,7 @@ list_exec() {
     fi
 
     if [ "$MODE" = "--all" ] || [ "$MODE" = "-l" ] || [ "$MODE" = "--local" ]; then
-        LOCAL_PKG="$(list_local_packages)"
+        local LOCAL_PKG="$(list_local_packages)"
         while read -r PKG; do
             if ! empty "$PKG"; then
                 PACKAGES["$PKG"]="LOCAL"
@@ -2586,7 +2736,7 @@ list_exec() {
     fi
 
     if [ "$MODE" = "--all" ] || [ "$MODE" = "-i" ] || [ "$MODE" = "--installed" ]; then 
-        INSTALLED_PKG="$(list_installed_packages)"
+        local INSTALLED_PKG="$(list_installed_packages)"
         while read -r PKG; do
             if ! empty "$PKG"; then
                 PACKAGES["$PKG"]="INSTALLED"
@@ -2939,22 +3089,22 @@ version() {
 }
 
 manual_page() {
-    MANUAL_CMD="$1"
-    COMMAND_UPPER=${MANUAL_CMD^^}
-    MANUAL_NAME="$2"
-    MANUAL_SYNOPSIS="$3"
-    MANUAL_DESCRIPTION="$4"
-    MANUAL_OPTIONS="$5"
+    local MANUAL_CMD="$1"
+    local COMMAND_UPPER=${MANUAL_CMD^^}
+    local MANUAL_NAME="$2"
+    local MANUAL_SYNOPSIS="$3"
+    local MANUAL_DESCRIPTION="$4"
+    local MANUAL_OPTIONS="$5"
     
-    HEADER_LEFT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
-    HEADER_CENTER_MSG="${PROGRAM_NAME^} Manual"
-    HEADER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    local HEADER_LEFT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    local HEADER_CENTER_MSG="${PROGRAM_NAME^} Manual"
+    local HEADER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
     let HEADER_CENTER_COLS=$(( (${#HEADER_CENTER_MSG} + $TERM_COLS) / 2))-${#HEADER_LEFT_MSG}
     let HEADER_RIGHT_COLS=$TERM_COLS-${#HEADER_RIGHT_MSG}-$HEADER_CENTER_COLS-1
 
-    FOOTER_LEFT_MSG="$PROGRAM_NAME $VERSION_NUMBER"
-    FOOTER_CENTER_MSG="$VERSION_DATE"
-    FOOTER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
+    local FOOTER_LEFT_MSG="$PROGRAM_NAME $VERSION_NUMBER"
+    local FOOTER_CENTER_MSG="$VERSION_DATE"
+    local FOOTER_RIGHT_MSG="${PROGRAM_NAME^^}-$COMMAND_UPPER"
     let FOOTER_CENTER_COLS=$(( (${#FOOTER_CENTER_MSG} + $TERM_COLS) / 2))-${#FOOTER_LEFT_MSG}
     let FOOTER_RIGHT_COLS=$TERM_COLS-${#FOOTER_RIGHT_MSG}-$FOOTER_CENTER_COLS-1
 
@@ -2977,130 +3127,130 @@ manual_page() {
 }
 
 help_init() {
-    COMMAND="init"
-    NAME="Inits ${PROGRAM_NAME}"
-    SYNOPSIS="<url>"
-    DESCRIPTION="Initializes a ${PROGRAM_NAME} store in the current directory"
+    local COMMAND="init"
+    local NAME="Inits ${PROGRAM_NAME}"
+    local SYNOPSIS="<url>"
+    local DESCRIPTION="Initializes a ${PROGRAM_NAME} store in the current directory"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_env() {
-    COMMAND="env"
-    NAME="Get and set $PROGRAM_NAME variables"
-    SYNOPSIS="[option]|<name>|<name> <value>"
-    DESCRIPTION="You can add/remove/get/set variables with this command"
-    OPTIONS=$(env_options)
+    local COMMAND="env"
+    local NAME="Get and set $PROGRAM_NAME variables"
+    local SYNOPSIS="[option]|<name>|<name> <value>"
+    local DESCRIPTION="You can add/remove/get/set variables with this command"
+    local OPTIONS=$(env_options)
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION" "$OPTIONS"
 }
 
 help_pull() {
-    COMMAND="pull"
-    NAME="Pulls a package from the $PROGRAM_NAME server"
-    SYNOPSIS="<package>"
-    DESCRIPTION="The package is retrieved from the $PROGRAM_NAME server only if is not already available localy in the pakage path ($EPM_PKG_PATH) or in the staging path ($EPM_STG_PATH). After obtaining the package the data is decompressed to the pakage path"
+    local COMMAND="pull"
+    local NAME="Pulls a package from the $PROGRAM_NAME server"
+    local SYNOPSIS="<package>"
+    local DESCRIPTION="The package is retrieved from the $PROGRAM_NAME server only if is not already available localy in the pakage path ($EPM_PKG_PATH) or in the staging path ($EPM_STG_PATH). After obtaining the package the data is decompressed to the pakage path"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_install() {
-    COMMAND="install"
-    NAME="Installs a $PROGRAM_NAME package"
-    SYNOPSIS="<package>"
-    DESCRIPTION="Installs a package. This command executes a pull if the package does not exists locally. Also, if the package is already installed it is uninstalled first"
+    local COMMAND="install"
+    local NAME="Installs a $PROGRAM_NAME package"
+    local SYNOPSIS="<package>"
+    local DESCRIPTION="Installs a package. This command executes a pull if the package does not exists locally. Also, if the package is already installed it is uninstalled first"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_uninstall() {
-    COMMAND="uninstall"
-    NAME="Uninstalls a $PROGRAM_NAME package"
-    SYNOPSIS="<PACKAGE>"
-    DESCRIPTION="Uninstalls a package. If this package has child packages they are uninstalled also. This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
+    local COMMAND="uninstall"
+    local NAME="Uninstalls a $PROGRAM_NAME package"
+    local SYNOPSIS="<PACKAGE>"
+    local DESCRIPTION="Uninstalls a package. If this package has child packages they are uninstalled also. This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_purge() {
-    COMMAND="purge"
-    NAME="Purges a $PROGRAM_NAME package"
-    SYNOPSIS="<PACKAGE>"
-    DESCRIPTION="Purges a package, i.e. uninstalls and removes it from the local package cache. If this package has child packages they are uninstalled (but not purged). This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
+    local COMMAND="purge"
+    local NAME="Purges a $PROGRAM_NAME package"
+    local SYNOPSIS="<PACKAGE>"
+    local DESCRIPTION="Purges a package, i.e. uninstalls and removes it from the local package cache. If this package has child packages they are uninstalled (but not purged). This child packages are identified as all the packages that start with the current package name and are suffixed by an \"_\" followed by a name"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_pack() {
-    COMMAND="pack"
-    NAME="Creates a $PROGRAM_NAME package"
-    SYNOPSIS="<PACKAGE>"
-    DESCRIPTION="Creates a package for all the environments listed in that package path. The package is composed of two files, one stores the package data (binaries and configurations) and other is the computed checksum of the package directory. If the package has a custom build script it is used to create the package binary"
+    local COMMAND="pack"
+    local NAME="Creates a $PROGRAM_NAME package"
+    local SYNOPSIS="<PACKAGE>"
+    local DESCRIPTION="Creates a package for all the environments listed in that package path. The package is composed of two files, one stores the package data (binaries and configurations) and other is the computed checksum of the package directory. If the package has a custom build script it is used to create the package binary"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_push() {
-    COMMAND="push"
-    NAME="Pushes a $PROGRAM_NAME package to the server"
-    SYNOPSIS="<PACKAGE>"
-    DESCRIPTION="Uploads a package to a server"
+    local COMMAND="push"
+    local NAME="Pushes a $PROGRAM_NAME package to the server"
+    local SYNOPSIS="<PACKAGE>"
+    local DESCRIPTION="Uploads a package to a server"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_update() {
-    COMMAND="update"
-    NAME="Updates a $PROGRAM_NAME package or all the packages"
-    SYNOPSIS="<PACKAGE>"
-    DESCRIPTION="Checks if one or more packages are up-to-date with the current version at the server. If the computed checksum of the package directory differs from the one stored in the package server, the previous version is uninstalled, and replaced by the new version"
+    local COMMAND="update"
+    local NAME="Updates a $PROGRAM_NAME package or all the packages"
+    local SYNOPSIS="<PACKAGE>"
+    local DESCRIPTION="Checks if one or more packages are up-to-date with the current version at the server. If the computed checksum of the package directory differs from the one stored in the package server, the previous version is uninstalled, and replaced by the new version"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_metadata() {
-    COMMAND="metadata"
-    NAME="Get $PROGRAM_NAME package metadata"
-    SYNOPSIS="<package> [option]|<package> <name>"
-    DESCRIPTION="You can get/list package metadata with this command"
-    OPTIONS="$(metadata_options)"
+    local COMMAND="metadata"
+    local NAME="Get $PROGRAM_NAME package metadata"
+    local SYNOPSIS="<package> [option]|<package> <name>"
+    local DESCRIPTION="You can get/list package metadata with this command"
+    local OPTIONS="$(metadata_options)"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_config() {
-    COMMAND="config"
-    NAME="Get and set $PROGRAM_NAME configurations"
-    SYNOPSIS="<package> [option]|<package> <name>|<package> <name> <value>"
-    DESCRIPTION="You can add/remove/get/set/list package configurations with this command"
-    OPTIONS="$(config_options)"
+    local COMMAND="config"
+    local NAME="Get and set $PROGRAM_NAME configurations"
+    local SYNOPSIS="<package> [option]|<package> <name>|<package> <name> <value>"
+    local DESCRIPTION="You can add/remove/get/set/list package configurations with this command"
+    local OPTIONS="$(config_options)"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_list() {
-    COMMAND="list"
-    NAME="Lists all ${PROGRAM_NAME} packages installed"
-    SYNOPSIS=""
-    DESCRIPTION="Lists all ${PROGRAM_NAME} packages installed in the system"
+    local COMMAND="list"
+    local NAME="Lists all ${PROGRAM_NAME} packages installed"
+    local SYNOPSIS=""
+    local DESCRIPTION="Lists all ${PROGRAM_NAME} packages installed in the system"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_version() {
-    COMMAND="version"
-    NAME="Displays $PROGRAM_NAME version"
-    SYNOPSIS=""
-    DESCRIPTION="Displays program version"
+    local COMMAND="version"
+    local NAME="Displays $PROGRAM_NAME version"
+    local SYNOPSIS=""
+    local DESCRIPTION="Displays program version"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
 
 help_help() {
-    COMMAND="help"
-    NAME="Display $PROGRAM_NAME help information"
-    SYNOPSIS="[COMMAND]"
-    DESCRIPTION="With no COMMAND given, the synopsis of the $PROGRAM_NAME command and a list of the most commonly used ${PROGRAM_NAME^} commands are printed on the standard output"
+    local COMMAND="help"
+    local NAME="Display $PROGRAM_NAME help information"
+    local SYNOPSIS="[COMMAND]"
+    local DESCRIPTION="With no COMMAND given, the synopsis of the $PROGRAM_NAME command and a list of the most commonly used ${PROGRAM_NAME^} commands are printed on the standard output"
     
     manual_page "$COMMAND" "$NAME" "$SYNOPSIS" "$DESCRIPTION"
 }
@@ -3177,61 +3327,66 @@ help() {
 
 error_invalid_command() {
     printf "$PROGRAM_FILE: '$1' is not a $PROGRAM_NAME command. See '$PROGRAM_FILE --help'."
+
     exit 1
 }
 
-CMD="$1"
+CMD="${1:-}"
+ARG1="${2:-}"
+ARG2="${3:-}"
+ARG3="${4:-}"
+ARG4="${5:-}"
 case "$CMD" in
     env)
-        env "$2" "$3" "$4"
+        env "$ARG1" "$ARG2" "$ARG3"
         ;;
     lib)
-        lib "$2" "$3"
+        lib "$ARG1" "$ARG2"
         ;;
     init)
-        init "$2" "$3" "$4"
+        init "$ARG1" "$ARG2" "$ARG3"
         ;;
     pull)
-        pull "$2"
+        pull "$ARG1"
         ;;
     -i|install)
-        install "$2"
+        install "$ARG1"
         ;;
     -r|require)
-        require "$2" "$3"
+        require "$ARG1" "$ARG2" "$ARG3"
         ;;
     -u|uninstall)
-        uninstall "$2"
+        uninstall "$ARG1"
         ;;
     purge)
-        purge "$2"
+        purge "$ARG1"
         ;;
     pack)
-        pack "$2"
+        pack "$ARG1"
         ;;
     push)
-        push "$2"
+        push "$ARG1"
         ;;
     update)
-        update "$2"
+        update "$ARG1"
         ;;
     status)
-        status "$2" "$3"
+        status "$ARG1" "$ARG2"
         ;;
     metadata)
-        metadata "$2" "$3" "$4" "$5"
+        metadata "$ARG1" "$ARG2" "$ARG3" "$ARG4"
         ;;
     config)
-        config "$2" "$3" "$4" "$5"
+        config "$ARG1" "$ARG2" "$ARG3" "$ARG4"
         ;;
     -l|list)
-        list "$2"
+        list "$ARG1"
         ;;
     --version|version)
         version    
         ;;
     --help|help)
-        help "$2"
+        help "$ARG1"
         ;;
     "")
         usage
