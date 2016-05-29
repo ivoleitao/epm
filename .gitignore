@@ -1,1 +1,10 @@
-
+.epm
+app
+bin/*
+etc
+lib
+tmp
+var
+ws
+www
+*.sh
